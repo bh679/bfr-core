@@ -46,7 +46,6 @@ final class Admin {
 	/* ====================== Settings & fields ==================== */
 
 	public function register_settings(): void {
-		$agg     = Aggregator::instance();
 
 		register_setting('bfr_core_group', \BFR_CORE_OPTION, [
 		  'sanitize_callback' => function($input) {
@@ -94,21 +93,30 @@ final class Admin {
 		      }
 		    }
 
-		    // --- Destination meta key sanitizer (your new part) ---
-		    $sanitize_key_name = function($v, $fallback) {
-		      $v = is_string($v) ? trim($v) : '';
-		      // allow a–z, 0–9, underscore, hyphen; must start with a letter
-		      if ($v !== '' && preg_match('/^[a-z][a-z0-9_\-]*$/', $v)) return $v;
-		      return $fallback;
-		    };
+			// Destination meta keys (support dropdown + custom)
+			$sanitize_key_name = function($v, $fallback) {
+			    $v = is_string($v) ? trim($v) : '';
+			    return ($v !== '' && preg_match('/^[a-z][a-z0-9_\-]*$/', $v)) ? $v : $fallback;
+			};
 
-		    $input['dest_meta_school_count']      = $sanitize_key_name($input['dest_meta_school_count']      ?? '', $defaults['dest_meta_school_count']);
-		    $input['dest_meta_max_depth']         = $sanitize_key_name($input['dest_meta_max_depth']         ?? '', $defaults['dest_meta_max_depth']);
-		    $input['dest_meta_min_course_price']  = $sanitize_key_name($input['dest_meta_min_course_price']  ?? '', $defaults['dest_meta_min_course_price']);
-		    $input['dest_meta_languages']         = $sanitize_key_name($input['dest_meta_languages']         ?? '', $defaults['dest_meta_languages']);
-		    $input['dest_meta_facilities']        = $sanitize_key_name($input['dest_meta_facilities']        ?? '', $defaults['dest_meta_facilities']);
-		    $input['dest_meta_languages_array']   = $sanitize_key_name($input['dest_meta_languages_array']   ?? '', $defaults['dest_meta_languages_array']);
-		    $input['dest_meta_facilities_array']  = $sanitize_key_name($input['dest_meta_facilities_array']  ?? '', $defaults['dest_meta_facilities_array']);
+			foreach ([
+			    'dest_meta_school_count',
+			    'dest_meta_max_depth',
+			    'dest_meta_min_course_price',
+			    'dest_meta_languages',
+			    'dest_meta_facilities',
+			    'dest_meta_languages_array',
+			    'dest_meta_facilities_array',
+			] as $k) {
+			    $sel = $k . '_select';
+			    if (isset($input[$sel]) && $input[$sel] !== '__custom__') {
+			        // From dropdown list
+			        $input[$k] = sanitize_text_field((string) $input[$sel]);
+			    } else {
+			        // From custom textbox (or fallback to default)
+			        $input[$k] = $sanitize_key_name($input[$k] ?? '', $defaults[$k]);
+			    }
+			}
 
 		    // --- If you plan to support migration later, snapshot the pre-change options here ---
 		    // update_option('bfr_core_prev_options', get_option(\BFR_CORE_OPTION, []), false);
@@ -155,9 +163,14 @@ final class Admin {
 			echo '</select>';
 		}, 'bfr-core', 'bfr_core_section');
 
-		add_settings_section('bfr_core_dest_keys', 'Destination Meta Keys (Outputs)', function(){
-		    echo '<p>Customize the meta keys BFR writes to the Destination posts. Change with care; see the migration tool below to copy old values into new keys.</p>';
-		}, 'bfr-core');
+		add_settings_section(
+		    'bfr_core_dest_keys',
+		    'Destination Meta Keys (Outputs)',
+		    function(){
+		        echo '<p>Customize the meta keys BFR writes to the Destination posts. Choose an existing key from the Destination CPT or select “Custom…”.</p>';
+		    },
+		    'bfr-core'
+		);
 
 		$dest_fields = [
 		    'dest_meta_school_count'     => 'Dest Meta: School Count',
@@ -170,15 +183,11 @@ final class Admin {
 		];
 
 		foreach ($dest_fields as $key => $label) {
-		    add_settings_field($key, $label, function() use ($key) {
+		    add_settings_field($key, $label, function() use ($key, $label) {
 		        $agg  = Aggregator::instance();
 		        $opts = wp_parse_args(get_option(\BFR_CORE_OPTION, []), $agg->defaults());
-		        printf(
-		            '<input type="text" name="%s[%s]" value="%s" class="regular-text" />',
-		            esc_attr(\BFR_CORE_OPTION),
-		            esc_attr($key),
-		            esc_attr($opts[$key] ?? '')
-		        );
+		        // IMPORTANT: use Destination CPT for the dropdown source
+		        echo Helpers::meta_key_picker_html($key, $label, $opts, $opts['dest_cpt'] ?? 'destinations');
 		        echo '<p class="description">Letters, numbers, underscore, hyphen. Must start with a letter.</p>';
 		    }, 'bfr-core', 'bfr_core_dest_keys');
 		}

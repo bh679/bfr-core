@@ -82,62 +82,62 @@ final class Helpers {
 		return $keys;
 	}
 
-	public static function meta_key_picker_html(string $opt_key, string $label, array $opts): string {
-		$cpt   = isset($opts['school_cpt']) && is_string($opts['school_cpt']) ? $opts['school_cpt'] : 'freedive-school';
-		$list  = self::get_meta_key_choices_for_cpt($cpt);
-		$current = isset($opts[$opt_key]) ? (string) $opts[$opt_key] : '';
 
-		$use_custom = $current !== '' && !in_array($current, $list, true);
+	public static function meta_key_picker_html( string $opt_key, string $label, array $opts, ?string $cpt_slug = null ) : string {
+	    // default to school_cpt (BC), allow caller to force a CPT slug
+	    $cpt = $cpt_slug ?: ( isset($opts['school_cpt']) && is_string($opts['school_cpt']) ? $opts['school_cpt'] : 'freedive-school' );
 
-		$opt_base    = \BFR_CORE_OPTION;
-		$select_name = $opt_base . '[' . esc_attr($opt_key) . '_select]';
-		$input_name  = $opt_base . '[' . esc_attr($opt_key) . ']';
+	    $list     = self::get_meta_key_choices_for_cpt( $cpt );
+	    $current  = isset($opts[$opt_key]) ? (string) $opts[$opt_key] : '';
+	    $use_custom = $current !== '' && ! in_array( $current, $list, true );
 
-		ob_start(); ?>
-		<select name="<?php echo esc_attr($select_name); ?>" data-bfr-target="<?php echo esc_attr($opt_key); ?>">
-			<option value="" <?php selected($use_custom ? '' : $current, ''); ?>>— Select meta key —</option>
-			<?php foreach ($list as $key): ?>
-				<option value="<?php echo esc_attr($key); ?>" <?php selected($use_custom ? '' : $current, $key); ?>>
-					<?php echo esc_html($key); ?>
-				</option>
-			<?php endforeach; ?>
-			<option value="__custom__" <?php selected($use_custom ? '__custom__' : '', '__custom__'); ?>>Custom…</option>
-		</select>
-		<input type="text"
-			class="regular-text bfr-meta-custom <?php echo $use_custom ? '' : 'hidden'; ?>"
-			data-bfr-for="<?php echo esc_attr($opt_key); ?>"
-			name="<?php echo esc_attr($input_name); ?>"
-			value="<?php echo esc_attr($current); ?>"
-			aria-label="<?php echo esc_attr($label); ?>"
-			placeholder="<?php echo esc_attr('Type meta key (when using “Custom…” )'); ?>" />
-		<?php
-		$html = ob_get_clean();
+	    $select_name = \BFR_CORE_OPTION . '[' . esc_attr($opt_key) . '_select]';
+	    $input_name  = \BFR_CORE_OPTION . '[' . esc_attr($opt_key) . ']';
 
-		static $printed = false;
-		if (!$printed) {
-			$printed = true;
-			$html .= '<style>.hidden{display:none}</style>';
-			$html .= '<script>
-			document.addEventListener("change", function(ev){
-				var sel = ev.target;
-				if (!sel.matches(\'select[name^="'.esc_js($opt_base).'"][name$="_select]"]\')) return;
-				var key = sel.getAttribute("data-bfr-target");
-				var input = document.querySelector(\'input.bfr-meta-custom[data-bfr-for="\'+key+\'"]\');
-				if (!input) return;
-				if (sel.value === "__custom__") {
-					input.classList.remove("hidden");
-					input.removeAttribute("hidden");
-					input.focus();
-				} else {
-					input.value = sel.value || "";
-					input.classList.add("hidden");
-					input.setAttribute("hidden","hidden");
-				}
-			});
-			</script>';
-		}
+	    ob_start(); ?>
+	    <select name="<?php echo esc_attr($select_name); ?>" data-bfr-target="<?php echo esc_attr($opt_key); ?>">
+	        <option value="" <?php selected( $use_custom ? '' : $current, '' ); ?>>— Select meta key —</option>
+	        <?php foreach ( $list as $key ) : ?>
+	            <option value="<?php echo esc_attr($key); ?>" <?php selected( $use_custom ? '' : $current, $key ); ?>>
+	                <?php echo esc_html($key); ?>
+	            </option>
+	        <?php endforeach; ?>
+	        <option value="__custom__" <?php selected( $use_custom ? '__custom__' : '', '__custom__' ); ?>>Custom…</option>
+	    </select>
+	    <input type="text"
+	        class="regular-text bfr-meta-custom <?php echo $use_custom ? '' : 'hidden'; ?>"
+	        data-bfr-for="<?php echo esc_attr($opt_key); ?>"
+	        name="<?php echo esc_attr($input_name); ?>"
+	        value="<?php echo esc_attr($current); ?>"
+	        aria-label="<?php echo esc_attr($label); ?>"
+	        placeholder="<?php echo esc_attr('Type meta key (when using “Custom…” )'); ?>" />
+	    <?php
+	    $html = ob_get_clean();
 
-		return $html;
+	    static $printed = false;
+	    if ( ! $printed ) {
+	        $printed = true;
+	        $html .= '<style>.hidden{display:none}</style>';
+	        $html .= '<script>
+	        document.addEventListener("change", function(ev){
+	            var sel = ev.target;
+	            if (!sel.matches(\'select[name^="' . \BFR_CORE_OPTION . '"][name$="_select]"]\')) return;
+	            var key = sel.getAttribute("data-bfr-target");
+	            var input = document.querySelector(\'input.bfr-meta-custom[data-bfr-for="\'+key+\'"]\');
+	            if (!input) return;
+	            if (sel.value === "__custom__") {
+	                input.classList.remove("hidden");
+	                input.removeAttribute("hidden");
+	                input.focus();
+	            } else {
+	                input.value = sel.value || "";
+	                input.classList.add("hidden");
+	                input.setAttribute("hidden","hidden");
+	            }
+	        });
+	        </script>';
+	    }
+	    return $html;
 	}
 
 	public static function get_relation_choices(): array {
