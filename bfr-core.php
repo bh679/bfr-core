@@ -21,7 +21,7 @@
  * Plugin Name:       BFR Core
  * Description:       Site-specific logic and destination aggregates for Book Freediving Retreats.
  * Author:            Brennan Hatton
- * Version:           0.6.0
+ * Version:           0.6.1
  */
 
 if (!defined('ABSPATH')) exit;
