@@ -164,8 +164,45 @@ final class BFR_Admin {
 
 	public function render_settings() {
 		if ( ! current_user_can('manage_options') ) return;
+
 		$agg  = BFR_Aggregator::instance();
 		$opts = wp_parse_args( get_option('bfr_core_options', []), $agg->defaults() );
+
+		// The meta keys we expect BFR to register (and their intended types)
+		$expected_meta = [
+			'bfr_school_count'     => 'integer',
+			'bfr_max_depth'        => 'number',
+			'bfr_min_course_price' => 'number',
+			'bfr_languages'        => 'string',
+			'bfr_facilities'       => 'string',
+		];
+
+		$dest_cpt = $opts['dest_cpt'] ?? 'destinations';
+
+		// Collect registration info (uses core helper if available)
+		$registered = [];
+		if ( function_exists('get_registered_meta_keys') ) {
+			$registered = get_registered_meta_keys( 'post', $dest_cpt );
+			// Shape: [ meta_key => [ 'type' => 'string', 'show_in_rest' => true, ... ] ]
+		}
+
+		$rows = [];
+		foreach ( $expected_meta as $key => $want_type ) {
+			$exists = isset($registered[$key]);
+			$type   = $exists ? ($registered[$key]['type'] ?? '(unknown)') : '(not registered)';
+			$rest   = $exists ? (!empty($registered[$key]['show_in_rest']) ? 'on' : 'off') : 'off';
+
+			$ok = $exists && ($type === $want_type) && ($rest === 'on');
+
+			$rows[] = [
+				'key'   => $key,
+				'exists'=> $exists,
+				'type'  => $type,
+				'rest'  => $rest,
+				'ok'    => $ok,
+				'msg'   => $ok ? 'OK' : ($exists ? 'Type/REST mismatch' : 'Not registered'),
+			];
+		}
 		?>
 		<div class="wrap">
 			<h1>BFR Core</h1>
@@ -183,6 +220,36 @@ final class BFR_Admin {
 				<?php wp_nonce_field('bfr_recalc_now'); ?>
 				<?php submit_button('Recalculate all now', 'secondary'); ?>
 			</form>
+
+			<hr/>
+			<h2>Destination Meta Registration Status</h2>
+			<p>Confirm that aggregate meta keys are registered for <code><?php echo esc_html($dest_cpt); ?></code> (type + REST visibility).</p>
+			<table class="widefat striped" style="max-width:880px">
+				<thead>
+					<tr>
+						<th>Meta key</th>
+						<th>Status</th>
+						<th>Type</th>
+						<th>REST</th>
+						<th>Notes</th>
+					</tr>
+				</thead>
+				<tbody>
+				<?php foreach ( $rows as $r ) : ?>
+					<tr>
+						<td><code><?php echo esc_html($r['key']); ?></code></td>
+						<td><?php echo $r['ok'] ? '✅ Registered' : ( $r['exists'] ? '⚠️ Issue' : '❌ Missing' ); ?></td>
+						<td><?php echo esc_html($r['type']); ?></td>
+						<td><?php echo $r['rest'] === 'on' ? 'on' : 'off'; ?></td>
+						<td><?php echo esc_html($r['msg']); ?></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<p class="description" style="max-width:880px">
+				If a key shows “Missing”: ensure the plugin is active and that your <em>Destination CPT</em> is set correctly above. Registration runs on <code>init</code>.
+				After changing the Destination CPT, reload this page.
+			</p>
 
 			<hr/>
 			<h2>Diagnostics</h2>
