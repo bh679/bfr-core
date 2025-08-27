@@ -48,77 +48,96 @@ final class Admin {
 	public function register_settings(): void {
 
 		register_setting('bfr_core_group', \BFR_CORE_OPTION, [
-		  'sanitize_callback' => function($input) {
-		    $agg      = Aggregator::instance();
-		    $defaults = $agg->defaults();
+			'sanitize_callback' => function ($input) {
+				$agg      = Aggregator::instance();
+				$defaults = $agg->defaults();
 
-		    $input = is_array($input) ? $input : [];
+				$input = is_array($input) ? $input : [];
 
-		    // --- CPT choices / relation choices ---
-		    $valid_cpts = Helpers::get_cpt_choices();      // slug => label
-		    $valid_rel  = Helpers::get_relation_choices(); // slug => label (may be empty)
+				// For cache-busting comparisons
+				$prev_opts   = get_option(\BFR_CORE_OPTION, []);
+				$prev_dest   = is_array($prev_opts) ? ($prev_opts['dest_cpt']   ?? '') : '';
+				$prev_school = is_array($prev_opts) ? ($prev_opts['school_cpt'] ?? '') : '';
 
-		    // Destination CPT
-		    if (isset($input['dest_cpt']) && isset($valid_cpts[$input['dest_cpt']])) {
-		      // ok
-		    } else {
-		      $input['dest_cpt'] = $defaults['dest_cpt'];
-		    }
+				// --- CPT choices / relation choices ---
+				$valid_cpts = Helpers::get_cpt_choices();      // slug => label
+				$valid_rel  = Helpers::get_relation_choices(); // slug => label (may be empty)
 
-		    // School CPT
-		    if (isset($input['school_cpt']) && isset($valid_cpts[$input['school_cpt']])) {
-		      // ok
-		    } else {
-		      $input['school_cpt'] = $defaults['school_cpt'];
-		    }
+				// Destination CPT
+				if (isset($input['dest_cpt']) && isset($valid_cpts[$input['dest_cpt']])) {
+					// ok
+				} else {
+					$input['dest_cpt'] = $defaults['dest_cpt'];
+				}
 
-		    // Relation slug: blank allowed; otherwise must be a known relation
-		    if (isset($input['je_relation']) && $input['je_relation'] !== '') {
-		      $input['je_relation'] = isset($valid_rel[$input['je_relation']])
-		        ? $input['je_relation']
-		        : $defaults['je_relation'];
-		    } else {
-		      $input['je_relation'] = '';
-		    }
+				// School CPT
+				if (isset($input['school_cpt']) && isset($valid_cpts[$input['school_cpt']])) {
+					// ok
+				} else {
+					$input['school_cpt'] = $defaults['school_cpt'];
+				}
 
-		    // --- School meta key pickers (dropdown + custom) ---
-		    foreach (['meta_dest_id','meta_max_depth','meta_price','meta_languages','meta_facilities'] as $k) {
-		      $sel = $k . '_select';
-		      if (isset($input[$sel]) && $input[$sel] !== '__custom__') {
-		        $input[$k] = sanitize_text_field((string) $input[$sel]);
-		      } elseif (isset($input[$k])) {
-		        $input[$k] = sanitize_text_field((string) $input[$k]);
-		      } else {
-		        $input[$k] = $defaults[$k];
-		      }
-		    }
+				// If either CPT changed, clear meta-key caches so pickers re-pull from DB
+				if ($prev_dest !== $input['dest_cpt']) {
+					if ($prev_dest) delete_transient('bfr_meta_keys_' . sanitize_key($prev_dest));
+					delete_transient('bfr_meta_keys_' . sanitize_key($input['dest_cpt']));
+				}
+				if ($prev_school !== $input['school_cpt']) {
+					if ($prev_school) delete_transient('bfr_meta_keys_' . sanitize_key($prev_school));
+					delete_transient('bfr_meta_keys_' . sanitize_key($input['school_cpt']));
+				}
 
-			// Destination meta keys (support dropdown + custom)
-			$sanitize_key_name = function($v, $fallback) {
-			    $v = is_string($v) ? trim($v) : '';
-			    return ($v !== '' && preg_match('/^[a-z][a-z0-9_\-]*$/', $v)) ? $v : $fallback;
-			};
+				// Relation slug: blank allowed; otherwise must be a known relation
+				if (isset($input['je_relation']) && $input['je_relation'] !== '') {
+					$input['je_relation'] = isset($valid_rel[$input['je_relation']])
+						? $input['je_relation']
+						: $defaults['je_relation'];
+				} else {
+					$input['je_relation'] = '';
+				}
 
-			foreach ($dest_fields as $key => $label) {
-			    add_settings_field($key, $label, function() use ($key, $label) {
-			        $agg   = Aggregator::instance();
-			        $defs  = $agg->defaults();
-			        $opts  = wp_parse_args(get_option(\BFR_CORE_OPTION, []), $defs);
-			        $cpt   = $opts['dest_cpt'] ?? 'destinations';
-			        $def_v = $defs[$key] ?? ''; // plugin’s default key for this output
+				// --- School meta key pickers (dropdown + custom) ---
+				foreach (['meta_dest_id','meta_max_depth','meta_price','meta_languages','meta_facilities'] as $k) {
+					$sel = $k . '_select';
+					if (isset($input[$sel]) && $input[$sel] !== '__custom__') {
+						$input[$k] = sanitize_text_field((string) $input[$sel]);
+					} elseif (isset($input[$k])) {
+						$input[$k] = sanitize_text_field((string) $input[$k]);
+					} else {
+						$input[$k] = $defaults[$k];
+					}
+				}
 
-			        echo Helpers::meta_key_picker_html($key, $label, $opts, $cpt, $def_v);
-			        echo '<p class="description">Letters, numbers, underscore, hyphen. Must start with a letter.</p>';
-			    }, 'bfr-core', 'bfr_core_dest_keys');
+				// --- Destination meta keys (dropdown + custom, validate names) ---
+				$sanitize_key_name = function($v, $fallback) {
+					$v = is_string($v) ? trim($v) : '';
+					// letters/numbers/_/- only, must start with a letter
+					return ($v !== '' && preg_match('/^[a-z][a-z0-9_\-]*$/', $v)) ? $v : $fallback;
+				};
+
+				foreach ([
+					'dest_meta_school_count',
+					'dest_meta_max_depth',
+					'dest_meta_min_course_price',
+					'dest_meta_languages',
+					'dest_meta_facilities',
+					'dest_meta_languages_array',
+					'dest_meta_facilities_array',
+				] as $k) {
+					$sel = $k . '_select';
+					if (isset($input[$sel]) && $input[$sel] !== '__custom__') {
+						// Chosen from dropdown (CPT keys)
+						$input[$k] = sanitize_text_field((string) $input[$sel]);
+					} else {
+						// Custom (or empty) -> validate or fall back
+						$input[$k] = $sanitize_key_name($input[$k] ?? '', $defaults[$k]);
+					}
+				}
+
+				// Backfill missing + allow external filters
+				$out = wp_parse_args($input, $defaults);
+				return apply_filters('bfr_core_sanitized_options', $out);
 			}
-
-		    // --- If you plan to support migration later, snapshot the pre-change options here ---
-		    // update_option('bfr_core_prev_options', get_option(\BFR_CORE_OPTION, []), false);
-
-		    // Backfill missing keys and allow external filters
-		    $out = wp_parse_args($input, $defaults);
-		    return apply_filters('bfr_core_sanitized_options', $out);
-		  }
 		]);
 
 		add_settings_section('bfr_core_section', 'General Settings', function(){
@@ -238,17 +257,25 @@ final class Admin {
 
 		$agg  = Aggregator::instance();
 		$opts = wp_parse_args(get_option(\BFR_CORE_OPTION, []), $agg->defaults());
+
+		// Optional: manual refresh of meta-key cache for the selected CPTs
+		if (isset($_GET['bfr_refresh_keys'])) {
+			$dest   = $opts['dest_cpt']   ?? 'destinations';
+			$school = $opts['school_cpt'] ?? 'freedive-school';
+			delete_transient('bfr_meta_keys_' . sanitize_key($dest));
+			delete_transient('bfr_meta_keys_' . sanitize_key($school));
+		}
+
 		$dest_cpt = $opts['dest_cpt'] ?? 'destinations';
 
 		$keys = [
-		    $opts['dest_meta_school_count']     => 'integer',
-		    $opts['dest_meta_max_depth']        => 'number',
-		    $opts['dest_meta_min_course_price'] => 'number',
-		    $opts['dest_meta_languages']        => 'string',
-		    $opts['dest_meta_facilities']       => 'string',
+			$opts['dest_meta_school_count']     => 'integer',
+			$opts['dest_meta_max_depth']        => 'number',
+			$opts['dest_meta_min_course_price'] => 'number',
+			$opts['dest_meta_languages']        => 'string',
+			$opts['dest_meta_facilities']       => 'string',
 		];
-
-		$expected_meta = $keys; // use this in the table loop
+		$expected_meta = $keys;
 
 		$registered = function_exists('get_registered_meta_keys')
 			? (get_registered_meta_keys('post', $dest_cpt) ?: [])
@@ -257,7 +284,13 @@ final class Admin {
 		$je_defined = Helpers::get_jetengine_meta_keys_for_cpt($dest_cpt);
 		?>
 		<div class="wrap">
-			<h1>BFR Core</h1>
+			<h1 style="display:flex;align-items:center;gap:.5rem">
+				BFR Core
+				<a class="button button-secondary button-small"
+				   href="<?php echo esc_url(add_query_arg('bfr_refresh_keys', '1')); ?>">
+					Refresh meta keys
+				</a>
+			</h1>
 
 			<form method="post" action="options.php">
 				<?php settings_fields('bfr_core_group'); ?>
@@ -278,23 +311,23 @@ final class Admin {
 			<h2>Destination Meta Registration Status</h2>
 			<table class="widefat striped" style="max-width:980px">
 				<thead>
-					<tr>
-						<th>Meta key</th>
-						<th>Status</th>
-						<th>Type</th>
-						<th>REST</th>
-						<th>JE UI</th>
-						<th>Notes</th>
-					</tr>
+				<tr>
+					<th>Meta key</th>
+					<th>Status</th>
+					<th>Type</th>
+					<th>REST</th>
+					<th>JE UI</th>
+					<th>Notes</th>
+				</tr>
 				</thead>
 				<tbody>
-					<?php foreach ($expected_meta as $key => $want_type):
-						$exists = isset($registered[$key]);
-						$type   = $exists ? ($registered[$key]['type'] ?? '(unknown)') : '(not registered)';
-						$rest   = $exists && !empty($registered[$key]['show_in_rest']) ? 'on' : 'off';
-						$ok     = $exists && ($type === $want_type) && ($rest === 'on');
-						$in_je  = isset($je_defined[$key]);
-						$msg    = $ok ? 'OK' : ($exists ? 'Type/REST mismatch' : 'Not registered');
+				<?php foreach ($expected_meta as $key => $want_type):
+					$exists = isset($registered[$key]);
+					$type   = $exists ? ($registered[$key]['type'] ?? '(unknown)') : '(not registered)';
+					$rest   = $exists && !empty($registered[$key]['show_in_rest']) ? 'on' : 'off';
+					$ok     = $exists && ($type === $want_type) && ($rest === 'on');
+					$in_je  = isset($je_defined[$key]);
+					$msg    = $ok ? 'OK' : ($exists ? 'Type/REST mismatch' : 'Not registered');
 					?>
 					<tr>
 						<td><code><?php echo esc_html($key); ?></code></td>
@@ -304,7 +337,7 @@ final class Admin {
 						<td><?php echo $in_je ? '✅ yes' : '—'; ?></td>
 						<td><?php echo esc_html($msg); ?></td>
 					</tr>
-					<?php endforeach; ?>
+				<?php endforeach; ?>
 				</tbody>
 			</table>
 

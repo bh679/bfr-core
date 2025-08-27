@@ -15,13 +15,13 @@
  * Keep this file tiny: no business logic here.
  *
  * @package   BFR\Core
- * @since     0.6.1
+ * @since     0.6.2
  */
 /**
  * Plugin Name:       BFR Core
  * Description:       Site-specific logic and destination aggregates for Book Freediving Retreats.
  * Author:            Brennan Hatton
- * Version:           0.6.1
+ * Version:           0.6.2
  */
 
 if (!defined('ABSPATH')) exit;
