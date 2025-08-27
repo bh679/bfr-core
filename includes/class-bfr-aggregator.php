@@ -1,4 +1,5 @@
 <?php
+<<<<<<< HEAD
 /**
  * Aggregation engine: cron, triggers, and recompute logic.
  *
@@ -7,6 +8,9 @@
  *  - Listen to save/trash/untrash/meta-change events.
  *  - Provide a daily cron as a safety net.
  */
+=======
+/* (cron + hooks + aggregation) */
+>>>>>>> main
 
 if ( ! defined('ABSPATH') ) exit;
 
@@ -26,9 +30,14 @@ final class BFR_Aggregator {
 	}
 
 	private function __construct() {
+<<<<<<< HEAD
 		// Load saved options merged with defaults.
 		$stored   = get_option(defined('BFR_CORE_OPTION') ? BFR_CORE_OPTION : 'bfr_core_options', []);
 		$this->cfg = wp_parse_args( is_array($stored) ? $stored : [], $this->defaults() );
+=======
+		// Load options merged with defaults
+		$this->cfg = BFR_Helpers::get_opts();
+>>>>>>> main
 
 		/* ---------- Cron ---------- */
 		add_action(defined('BFR_CORE_CRON_HOOK') ? BFR_CORE_CRON_HOOK : 'bfr_destinations_recalc', [$this, 'cron_recalculate_all']);
@@ -51,6 +60,7 @@ final class BFR_Aggregator {
 	 * @return array
 	 */
 	public function defaults(): array {
+<<<<<<< HEAD
 		$defaults = [
 			'dest_cpt'        => 'destinations',            // Destination CPT slug (Unified default)
 			'school_cpt'      => 'freedive-school',         // School CPT slug
@@ -68,6 +78,9 @@ final class BFR_Aggregator {
 		 * add_filter('bfr_core_defaults', function($d){ $d['school_cpt'] = 'schools'; return $d; });
 		 */
 		return apply_filters('bfr_core_defaults', $defaults);
+=======
+		return BFR_Helpers::get_opts();
+>>>>>>> main
 	}
 
 	/* ===============================================================
@@ -237,19 +250,31 @@ final class BFR_Aggregator {
 			$facils = $this->merge_terms($facils, get_post_meta($sid, $this->cfg['meta_facilities'], true));
 		}
 
+<<<<<<< HEAD
 		// Denormalized fields on Destination (for Elementor/filters)
 		update_post_meta($dest_id, 'bfr_school_count',      (int) $count);
 		update_post_meta($dest_id, 'bfr_max_depth',         ($max_depth === null ? '' : $max_depth));
 		update_post_meta($dest_id, 'bfr_min_course_price',  ($min_price === null ? '' : $min_price));
+=======
+		// Denormalized fields on Destination (keys configurable via Admin)
+		update_post_meta($dest_id, $this->cfg['out_school_count'],     (int) $count);
+		update_post_meta($dest_id, $this->cfg['out_max_depth'],        ($max_depth === null ? '' : $max_depth));
+		update_post_meta($dest_id, $this->cfg['out_min_course_price'], ($min_price === null ? '' : $min_price));
+>>>>>>> main
 
 		$langs  = array_values( array_unique( array_filter($langs) ) );
 		$facils = array_values( array_unique( array_filter($facils) ) );
 
+<<<<<<< HEAD
 		// Keep both human-friendly CSVs and JSON arrays for downstream flexibility
 		update_post_meta($dest_id, 'bfr_languages_array',   wp_json_encode($langs));
 		update_post_meta($dest_id, 'bfr_facilities_array',  wp_json_encode($facils));
 		update_post_meta($dest_id, 'bfr_languages',         implode(',', $langs));
 		update_post_meta($dest_id, 'bfr_facilities',        implode(',', $facils));
+=======
+		update_post_meta($dest_id, $this->cfg['out_languages'],  implode(',', $langs));
+		update_post_meta($dest_id, $this->cfg['out_facilities'], implode(',', $facils));
+>>>>>>> main
 	}
 
 	/* ===============================================================
