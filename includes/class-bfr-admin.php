@@ -175,6 +175,53 @@ final class BFR_Admin {
 					facils=<code><?php echo esc_html($opts['meta_facilities']); ?></code>
 				</li>
 			</ul>
+
+			<?php if ( isset($_GET['bfr_debug']) && current_user_can('manage_options') ) : ?>
+	<hr/>
+	<h2>Debug: JetEngine relations snapshot</h2>
+	<pre style="max-height:300px;overflow:auto;background:#fafafa;border:1px solid #ddd;padding:10px;"><?php
+		$dump = [];
+		try {
+			$dump['has_function_jet_engine'] = function_exists('jet_engine');
+			if ( function_exists('jet_engine') ) {
+				$je = jet_engine();
+				$dump['has_relations_prop'] = isset($je->relations);
+				if ( isset($je->modules) && method_exists($je->modules, 'get_module') ) {
+					$rel_module = $je->modules->get_module('relations');
+					if ($rel_module) {
+						$dump['modules_relations_class'] = get_class($rel_module);
+						if ( isset($rel_module->relations) ) {
+							$mgr = $rel_module->relations;
+							$dump['modules_relations_mgr_class'] = is_object($mgr) ? get_class($mgr) : gettype($mgr);
+							if ( is_object($mgr) && method_exists($mgr, 'get_relations') ) {
+								$rels = $mgr->get_relations();
+								$dump['modules_relations_count'] = is_array($rels) ? count($rels) : 'not-array';
+							}
+						}
+					}
+				}
+				if ( isset($je->relations) ) {
+					$comp = $je->relations;
+					$dump['component_relations_class'] = is_object($comp) ? get_class($comp) : gettype($comp);
+					if ( is_object($comp) && method_exists($comp, 'get_component') ) {
+						$c = $comp->get_component();
+						$dump['component_get_component_class'] = is_object($c) ? get_class($c) : gettype($c);
+						if ( is_object($c) && method_exists($c, 'get_relations') ) {
+							$list = $c->get_relations();
+							$dump['component_relations_count'] = is_array($list) ? count($list) : 'not-array';
+						}
+					}
+				}
+			}
+			$opt = get_option('jet_engine_relations');
+			$dump['option_relations_count'] = is_array($opt) ? count($opt) : 'not-array';
+		} catch (\Throwable $e) {
+			$dump['error'] = $e->getMessage();
+		}
+		echo esc_html( print_r($dump, true) );
+	?></pre>
+	<p class="description">Open this page with <code>&bfr_debug=1</code> to see this panel. Remove after we’re done.</p>
+<?php endif; ?>
 		</div>
 		<?php
 	}
