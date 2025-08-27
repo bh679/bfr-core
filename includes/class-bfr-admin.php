@@ -190,7 +190,6 @@ final class BFR_Admin {
 					$rel_module = $je->modules->get_module('relations');
 					if ($rel_module) {
 						$dump['modules_relations_class'] = get_class($rel_module);
-						
 						if ( isset($rel_module->relations) ) {
 							$mgr = $rel_module->relations;
 							$dump['modules_relations_mgr_class'] = is_object($mgr) ? get_class($mgr) : gettype($mgr);
@@ -271,52 +270,82 @@ final class BFR_Admin {
 		};
 
 		try {
-			if ( function_exists('jet_engine') && isset( jet_engine()->relations ) ) {
-				$mgr = jet_engine()->relations; // Jet_Engine\Relations\Manager (per your debug)
-
-				$list = null;
-
-				// Try the typical manager methods in order of likelihood
-				if ( is_object($mgr) && method_exists($mgr, 'get_relations') ) {
-					$list = $mgr->get_relations();                 // array of Relation objects/arrays
-				} elseif ( is_object($mgr) && method_exists($mgr, 'get_items') ) {
-					$list = $mgr->get_items();                     // some builds use this name
-				} elseif ( is_object($mgr) && property_exists($mgr, 'relations') ) {
-					$list = $mgr->relations;                       // direct property (array)
-				}
-
-				if ( is_array($list) ) {
-					foreach ($list as $rel) {
-						$slug = ''; $name = '';
-
-						// Object style (newer builds)
-						if ( is_object($rel) ) {
-							if ( method_exists($rel, 'get_args') ) {
-								$args = $rel->get_args();
-								$slug = isset($args['slug']) ? (string) $args['slug'] : '';
-								$name = isset($args['name']) ? (string) $args['name'] : '';
+			// ---------- Strategy A: Modules API (JetEngine 3.x+)
+			if ( function_exists('jet_engine') && method_exists(jet_engine(), 'modules') ) {
+				$modules = jet_engine()->modules;
+				if ( $modules && method_exists($modules, 'get_module') ) {
+					$rel_module = $modules->get_module('relations'); // object or null
+					if ( $rel_module ) {
+						// common shapes observed across builds
+						if ( isset($rel_module->relations) && is_object($rel_module->relations) ) {
+							$mgr = $rel_module->relations;
+							if ( method_exists($mgr, 'get_relations') ) {
+								$list = $mgr->get_relations();
+								if ( is_array($list) ) {
+									foreach ($list as $rel) {
+										$slug = ''; $name = '';
+										if ( is_object($rel) && method_exists($rel, 'get_args') ) {
+											$args = $rel->get_args();
+											$slug = isset($args['slug']) ? (string)$args['slug'] : '';
+											$name = isset($args['name']) ? (string)$args['name'] : '';
+										} elseif ( is_array($rel) ) {
+											$slug = isset($rel['slug']) ? (string)$rel['slug'] : '';
+											$name = isset($rel['name']) ? (string)$rel['name'] : '';
+										}
+										if ( ! $slug && is_object($rel) && method_exists($rel, 'get_id') )    $slug = (string) $rel->get_id();
+										if ( ! $name && is_object($rel) && method_exists($rel, 'get_label') ) $name = (string) $rel->get_label();
+										$add($slug, $name);
+									}
+								}
 							}
-							if ( $slug === '' && method_exists($rel, 'get_id') )    $slug = (string) $rel->get_id();
-							if ( $name === '' && method_exists($rel, 'get_label') ) $name = (string) $rel->get_label();
-						}
-						// Array style (older builds)
-						if ( $slug === '' && is_array($rel) ) {
-							$slug = isset($rel['slug']) ? (string) $rel['slug'] : '';
-							$name = isset($rel['name']) ? (string) $rel['name'] : '';
-						}
-
-						if ( $slug !== '' ) {
-							$add($slug, $name);
 						}
 					}
 				}
 			}
 
-			// Last-chance fallback: some sites cache slugs in an option
+			// ---------- Strategy B: Legacy component (older builds)
+			if ( empty($choices) && function_exists('jet_engine') && isset(jet_engine()->relations) ) {
+				$rel_comp = jet_engine()->relations;
+				$list = [];
+				if ( is_object($rel_comp) ) {
+					if ( method_exists($rel_comp, 'get_component') ) {
+						$component = $rel_comp->get_component();
+						if ( $component && method_exists($component, 'get_relations') ) {
+							$list = $component->get_relations();
+						} elseif ( $component && isset($component->relations) ) {
+							$list = $component->relations;
+						}
+					}
+					if ( empty($list) && isset($rel_comp->relations) ) {
+						$list = $rel_comp->relations;
+					}
+				}
+
+				if ( is_array($list) ) {
+					foreach ($list as $rel) {
+						$slug = ''; $name = '';
+						if ( is_array($rel) ) {
+							$slug = isset($rel['slug']) ? (string)$rel['slug'] : '';
+							$name = isset($rel['name']) ? (string)$rel['name'] : '';
+						} elseif ( is_object($rel) ) {
+							if ( method_exists($rel, 'get_args') ) {
+								$args = $rel->get_args();
+								$slug = isset($args['slug']) ? (string)$args['slug'] : '';
+								$name = isset($args['name']) ? (string)$args['name'] : '';
+							}
+							if ( ! $slug && method_exists($rel, 'get_id') )    $slug = (string) $rel->get_id();
+							if ( ! $name && method_exists($rel, 'get_label') ) $name = (string) $rel->get_label();
+						}
+						$add($slug, $name);
+					}
+				}
+			}
+
+			// ---------- Strategy C: Option fallback (some sites cache relation args)
 			if ( empty($choices) ) {
 				$opt = get_option('jet_engine_relations');
 				if ( is_array($opt) ) {
-					foreach ($opt as $entry) {
+					foreach ( $opt as $entry ) {
 						if ( is_array($entry) ) {
 							$add( $entry['slug'] ?? '', $entry['name'] ?? '' );
 						}
@@ -324,12 +353,13 @@ final class BFR_Admin {
 				}
 			}
 		} catch (\Throwable $e) {
-			// Never fatal on the settings page; just return what we have.
+			// swallow; we always return an array
 		}
 
 		if ( ! empty($choices) ) {
 			natcasesort($choices);
 		}
+
 		return $choices;
 	}
 }
