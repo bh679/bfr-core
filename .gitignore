@@ -1,0 +1,17 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.idea/
+.vscode/
+
+# Node / build outputs (if you add tooling later)
+node_modules/
+dist/
+build/
+*.map
+
+# Composer (if you add it later)
+vendor/
+composer.lock
