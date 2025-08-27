@@ -151,6 +151,34 @@ final class BFR_Admin {
 	public function render_settings() {
 		if ( ! current_user_can('manage_options') ) return;
 
+
+
+		// --- BFR TEMP DEBUG (safe: prints only an HTML comment + logs) ---
+		try {
+		    $opts     = get_option('bfr_core_options', []);
+		    $destCpt  = isset($opts['dest_cpt']) ? (string)$opts['dest_cpt'] : 'destinations';
+		    $keys     = class_exists('BFR_Helpers')
+		        ? BFR_Helpers::get_destination_meta_keys($destCpt, 80)  // small, safe list
+		        : [];
+
+		    $snap = [
+		        'dest_cpt' => $destCpt,
+		        'opt_keys' => array_keys((array)$opts),
+		        'meta_keys_count' => is_array($keys) ? count($keys) : 0,
+		        'first_keys' => array_slice((array)$keys, 0, 20),
+		    ];
+
+		    $comment = "BFR DEBUG SNAPSHOT: " . json_encode($snap);
+		    // 1) Put it into HTML as a comment (view via View Source)
+		    echo "\n<!-- {$comment} -->\n";
+		    // 2) Also log to error_log
+		    error_log($comment);
+		} catch (\Throwable $e) {
+		    error_log('BFR DEBUG ERROR: ' . $e->getMessage());
+		}
+
+
+
 		$opts       = BFR_Helpers::get_opts();
 		$dest_cpt   = (string) ($opts['dest_cpt'] ?? 'destinations');
 
