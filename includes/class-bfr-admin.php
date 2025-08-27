@@ -1,5 +1,9 @@
 <?php
 if ( ! defined('ABSPATH') ) exit;
+if ( ! class_exists('BFR_Helpers') ) {
+    // Don’t fatal if helpers failed to load for some reason.
+    require_once dirname(__FILE__) . '/class-bfr-helpers.php';
+}
 
 final class BFR_Admin {
 

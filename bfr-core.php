@@ -12,6 +12,8 @@ define('BFR_CORE_FILE', __FILE__);
 define('BFR_CORE_DIR',  plugin_dir_path(__FILE__));
 define('BFR_CORE_URL',  plugin_dir_url(__FILE__));
 
+/** <<< ADD THIS LINE (must be before admin uses the class) */
+require_once BFR_CORE_DIR . 'includes/class-bfr-helpers.php';
 require_once BFR_CORE_DIR . 'includes/class-bfr-aggregator.php';
 require_once BFR_CORE_DIR . 'includes/class-bfr-admin.php';
 
