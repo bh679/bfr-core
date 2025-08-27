@@ -203,25 +203,79 @@ final class BFR_Admin {
 	 * Key = relation slug, value = relation label.
 	 */
 	private function get_relation_choices(): array {
-		$choices = [];
-		if ( function_exists('jet_engine') && isset( jet_engine()->relations ) ) {
-			$rels = jet_engine()->relations;
-			if ( method_exists($rels, 'get_component') ) {
-				$component = $rels->get_component();
-				if ( method_exists($component, 'get_relations') ) {
-					$list = $component->get_relations();
-					if ( is_array($list) ) {
-						foreach ($list as $rel) {
-							$slug  = isset($rel['slug'])  ? (string) $rel['slug']  : '';
-							$label = isset($rel['name'])  ? (string) $rel['name']  : $slug;
-							if ($slug !== '') $choices[$slug] = $label;
-						}
+	$choices = [];
+
+	// Strategy A: JetEngine Relations Manager (most stable)
+	if ( class_exists('\Jet_Engine\Relations\Manager') ) {
+		$mgr = \Jet_Engine\Relations\Manager::instance();
+		if ( method_exists($mgr, 'get_relations') ) {
+			$rels = $mgr->get_relations(); // array of Relation objects
+			if ( is_array($rels) ) {
+				foreach ( $rels as $rel ) {
+					// Newer versions expose ->get_args(); also keep fallbacks
+					$slug  = '';
+					$name  = '';
+
+					if ( method_exists($rel, 'get_args') ) {
+						$args = $rel->get_args();
+						$slug = isset($args['slug']) ? (string) $args['slug'] : '';
+						$name = isset($args['name']) ? (string) $args['name'] : '';
+					}
+
+					// Some builds expose ->get_id() / ->get_label()
+					if ( ! $slug && method_exists($rel, 'get_id') ) {
+						$slug = (string) $rel->get_id();
+					}
+					if ( ! $name && method_exists($rel, 'get_label') ) {
+						$name = (string) $rel->get_label();
+					}
+
+					if ( $slug !== '' ) {
+						$choices[$slug] = $name ?: $slug;
 					}
 				}
 			}
 		}
-		// If JetEngine isn't available, return empty; UI will still offer "Disabled"
-		natcasesort($choices);
-		return $choices;
 	}
+
+	// Strategy B: Legacy access via jet_engine()->relations component
+	if ( empty($choices) && function_exists('jet_engine') && isset( jet_engine()->relations ) ) {
+		$rels = jet_engine()->relations;
+		if ( method_exists($rels, 'get_component') ) {
+			$component = $rels->get_component();
+			// Some versions have ->get_relations(); others ->relations (prop)
+			if ( method_exists($component, 'get_relations') ) {
+				$list = $component->get_relations();
+			} elseif ( isset($component->relations) ) {
+				$list = $component->relations;
+			} else {
+				$list = [];
+			}
+			if ( is_array($list) ) {
+				foreach ($list as $rel) {
+					$slug = '';
+					$name = '';
+					// Array shape
+					if ( is_array($rel) ) {
+						$slug = isset($rel['slug']) ? (string) $rel['slug'] : '';
+						$name = isset($rel['name']) ? (string) $rel['name'] : '';
+					// Object shape (Relation)
+					} elseif ( is_object($rel) ) {
+						if ( method_exists($rel, 'get_args') ) {
+							$args = $rel->get_args();
+							$slug = isset($args['slug']) ? (string) $args['slug'] : '';
+							$name = isset($args['name']) ? (string) $args['name'] : '';
+						}
+						if ( ! $slug && method_exists($rel, 'get_id') ) $slug = (string) $rel->get_id();
+						if ( ! $name && method_exists($rel, 'get_label') ) $name = (string) $rel->get_label();
+					}
+					if ($slug !== '') $choices[$slug] = $name ?: $slug;
+				}
+			}
+		}
+	}
+
+	natcasesort($choices);
+	return $choices;
+}
 }
