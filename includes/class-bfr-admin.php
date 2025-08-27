@@ -223,74 +223,60 @@ final class BFR_Admin {
 			$choices[$slug] = $label !== '' ? $label : $slug;
 		};
 
-		// Strategy A: JetEngine Relations Manager (newer APIs)
-		if (class_exists('\\Jet_Engine\\Relations\\Manager')) {
-			$mgr = \Jet_Engine\Relations\Manager::instance();
-			if ($mgr && method_exists($mgr, 'get_relations')) {
-				$rels = $mgr->get_relations(); // often array of Relation objects
-				if (is_array($rels)) {
-					foreach ($rels as $rel) {
-						$slug = ''; $name = '';
-						// Object style (preferred)
-						if (is_object($rel)) {
-							if (method_exists($rel, 'get_args')) {
-								$args = $rel->get_args();
-								$slug = isset($args['slug']) ? (string)$args['slug'] : '';
-								$name = isset($args['name']) ? (string)$args['name'] : '';
+		// Strategy: use only the public jet_engine()->relations component.
+		// No static ::instance() calls (those vary by version).
+		if ( function_exists('jet_engine') ) {
+			try {
+				$je = jet_engine();
+				if ( $je && isset($je->relations) ) {
+					$rel_comp = $je->relations;
+
+					$list = [];
+					if ( is_object($rel_comp) ) {
+						// Newer builds:
+						if ( method_exists($rel_comp, 'get_component') ) {
+							$component = $rel_comp->get_component();
+							if ( $component ) {
+								if ( method_exists($component, 'get_relations') ) {
+									$list = $component->get_relations();
+								} elseif ( isset($component->relations) ) {
+									$list = $component->relations;
+								}
 							}
-							if ($slug === '' && method_exists($rel, 'get_id'))    $slug = (string)$rel->get_id();
-							if ($name === '' && method_exists($rel, 'get_label')) $name = (string)$rel->get_label();
 						}
-						// Array style (some builds)
-						if ($slug === '' && is_array($rel)) {
-							$slug = isset($rel['slug']) ? (string)$rel['slug'] : '';
-							$name = isset($rel['name']) ? (string)$rel['name'] : $name;
+						// Some builds expose relations directly:
+						if ( empty($list) && isset($rel_comp->relations) ) {
+							$list = $rel_comp->relations;
 						}
-						$add($slug, $name);
+					}
+
+					if ( is_array($list) ) {
+						foreach ( $list as $rel ) {
+							$slug = ''; $name = '';
+							if ( is_array($rel) ) {
+								$slug = isset($rel['slug']) ? (string)$rel['slug'] : '';
+								$name = isset($rel['name']) ? (string)$rel['name'] : '';
+							} elseif ( is_object($rel) ) {
+								if ( method_exists($rel, 'get_args') ) {
+									$args = $rel->get_args();
+									$slug = isset($args['slug']) ? (string)$args['slug'] : '';
+									$name = isset($args['name']) ? (string)$args['name'] : '';
+								}
+								if ( $slug === '' && method_exists($rel, 'get_id') )    $slug = (string) $rel->get_id();
+								if ( $name === '' && method_exists($rel, 'get_label') ) $name = (string) $rel->get_label();
+							}
+							$add($slug, $name);
+						}
 					}
 				}
+			} catch (\Throwable $e) {
+				// Swallow any JetEngine quirks and fall back to empty list
 			}
 		}
 
-		// Strategy B: Legacy component access
-		if (empty($choices) && function_exists('jet_engine') && isset(jet_engine()->relations)) {
-			$rels = jet_engine()->relations;
-			if ($rels && method_exists($rels, 'get_component')) {
-				$component = $rels->get_component();
-				$list = [];
-				if ($component) {
-					if (method_exists($component, 'get_relations')) {
-						$list = $component->get_relations();
-					} elseif (isset($component->relations)) {
-						$list = $component->relations;
-					}
-				}
-				if (is_array($list)) {
-					foreach ($list as $rel) {
-						$slug = ''; $name = '';
-						if (is_array($rel)) {
-							$slug = isset($rel['slug']) ? (string)$rel['slug'] : '';
-							$name = isset($rel['name']) ? (string)$rel['name'] : '';
-						} elseif (is_object($rel)) {
-							if (method_exists($rel, 'get_args')) {
-								$args = $rel->get_args();
-								$slug = isset($args['slug']) ? (string)$args['slug'] : '';
-								$name = isset($args['name']) ? (string)$args['name'] : '';
-							}
-							if ($slug === '' && method_exists($rel, 'get_id'))    $slug = (string)$rel->get_id();
-							if ($name === '' && method_exists($rel, 'get_label')) $name = (string)$rel->get_label();
-						}
-						$add($slug, $name);
-					}
-				}
-			}
-		}
-
-		// Sort nicely
-		if (!empty($choices)) {
+		if ( ! empty($choices) ) {
 			natcasesort($choices);
 		}
-
-		return $choices; // IMPORTANT: always return an array (even empty)
+		return $choices;  // always an array
 	}
 }
