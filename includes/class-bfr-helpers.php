@@ -1,11 +1,17 @@
 <?php
+/**
+ * Small, reusable utilities for CPTs, meta keys, and JetEngine discovery.
+ */
+
 if ( ! defined('ABSPATH') ) exit;
 
 final class BFR_Helpers {
 
 	/**
 	 * Return CPT choices suitable for a settings dropdown.
-	 * We include public post types with UI, minus built-in/system ones.
+	 * Includes public post types with UI, minus built-in/system ones.
+	 *
+	 * @return array slug => label
 	 */
 	public static function get_cpt_choices(): array {
 		$builtin_exclude = [
@@ -13,6 +19,7 @@ final class BFR_Helpers {
 			'oembed_cache','user_request','wp_block','wp_template','wp_template_part',
 			'wp_navigation','elementor_library'
 		];
+
 		$types = get_post_types(['show_ui' => true], 'objects');
 		$out = [];
 		foreach ($types as $slug => $obj) {
@@ -26,10 +33,15 @@ final class BFR_Helpers {
 
 	/**
 	 * Return distinct meta keys used by a CPT (cached for 10 minutes).
-	 * We scan posts joined to postmeta for that post_type.
+	 * Scans posts joined to postmeta for that post_type (lightweight list).
+	 *
+	 * @param string $cpt
+	 * @param int    $limit
+	 * @return string[]
 	 */
 	public static function get_meta_key_choices_for_cpt( string $cpt, int $limit = 300 ): array {
 		global $wpdb;
+
 		$cache_key = 'bfr_meta_keys_' . sanitize_key($cpt);
 		$cached    = get_transient($cache_key);
 		if ( is_array($cached) ) {
@@ -69,19 +81,22 @@ final class BFR_Helpers {
 	}
 
 	/**
-	 * Build the markup for a dropdown + "Custom…" input for a meta-key option.
-	 * $opt_key (e.g. 'meta_dest_id') and label are for the input/aria.
+	 * Build markup for a dropdown + “Custom…” input for a meta-key option.
+	 * $opt_key (e.g., 'meta_dest_id') and $label describe the input.
 	 * $opts must include the currently selected 'school_cpt'.
+	 *
+	 * @return string HTML
 	 */
 	public static function meta_key_picker_html( string $opt_key, string $label, array $opts ) : string {
-		$cpt   = isset($opts['school_cpt']) && is_string($opts['school_cpt']) ? $opts['school_cpt'] : 'freedive-schools';
+		$cpt   = isset($opts['school_cpt']) && is_string($opts['school_cpt']) ? $opts['school_cpt'] : 'freedive-school';
 		$list  = self::get_meta_key_choices_for_cpt( $cpt );
 		$current = isset($opts[$opt_key]) ? (string) $opts[$opt_key] : '';
 
 		$use_custom = $current !== '' && ! in_array( $current, $list, true );
 
-		$select_name = 'bfr_core_options[' . esc_attr($opt_key) . '_select]';
-		$input_name  = 'bfr_core_options[' . esc_attr($opt_key) . ']';
+		$opt_base    = defined('BFR_CORE_OPTION') ? BFR_CORE_OPTION : 'bfr_core_options';
+		$select_name = $opt_base . '[' . esc_attr($opt_key) . '_select]';
+		$input_name  = $opt_base . '[' . esc_attr($opt_key) . ']';
 
 		ob_start();
 		?>
@@ -105,7 +120,7 @@ final class BFR_Helpers {
 
 		$html = ob_get_clean();
 
-		// One-time tiny JS/CSS
+		// One-time tiny JS/CSS (no jQuery dependency)
 		static $printed = false;
 		if ( ! $printed ) {
 			$printed = true;
@@ -113,7 +128,7 @@ final class BFR_Helpers {
 			$html .= '<script>
 			document.addEventListener("change", function(ev){
 				var sel = ev.target;
-				if (!sel.matches(\'select[name^="bfr_core_options"][name$="_select]"]\')) return;
+				if (!sel.matches(\'select[name^="'.esc_js($opt_base).'"][name$="_select]"]\')) return;
 				var key = sel.getAttribute("data-bfr-target");
 				var input = document.querySelector(\'input.bfr-meta-custom[data-bfr-for="\'+key+\'"]\');
 				if (!input) return;
@@ -136,6 +151,8 @@ final class BFR_Helpers {
 	/**
 	 * Return JetEngine relation choices if JetEngine is active.
 	 * Key = relation slug, value = relation label.
+	 *
+	 * @return array
 	 */
 	public static function get_relation_choices(): array {
 		$choices = [];
@@ -152,26 +169,24 @@ final class BFR_Helpers {
 				// Strategy A: Modules API
 				if ( isset($je->modules) && method_exists($je->modules, 'get_module') ) {
 					$rel_module = $je->modules->get_module('relations');
-					if ( $rel_module ) {
-						if ( isset($rel_module->relations) && is_object($rel_module->relations) ) {
-							$mgr = $rel_module->relations;
-							if ( method_exists($mgr, 'get_relations') ) {
-								$list = $mgr->get_relations();
-								if ( is_array($list) ) {
-									foreach ( $list as $rel ) {
-										$slug=''; $name='';
-										if ( is_object($rel) && method_exists($rel, 'get_args') ) {
-											$args = $rel->get_args();
-											$slug = isset($args['slug']) ? (string)$args['slug'] : '';
-											$name = isset($args['name']) ? (string)$args['name'] : '';
-										} elseif ( is_array($rel) ) {
-											$slug = isset($rel['slug']) ? (string)$rel['slug'] : '';
-											$name = isset($rel['name']) ? (string)$rel['name'] : '';
-										}
-										if ( ! $slug && is_object($rel) && method_exists($rel, 'get_id') )    $slug = (string) $rel->get_id();
-										if ( ! $name && is_object($rel) && method_exists($rel, 'get_label') ) $name = (string) $rel->get_label();
-										$add($slug, $name);
+					if ( $rel_module && isset($rel_module->relations) ) {
+						$mgr = $rel_module->relations;
+						if ( method_exists($mgr, 'get_relations') ) {
+							$list = $mgr->get_relations();
+							if ( is_array($list) ) {
+								foreach ( $list as $rel ) {
+									$slug=''; $name='';
+									if ( is_object($rel) && method_exists($rel, 'get_args') ) {
+										$args = $rel->get_args();
+										$slug = isset($args['slug']) ? (string)$args['slug'] : '';
+										$name = isset($args['name']) ? (string)$args['name'] : '';
+									} elseif ( is_array($rel) ) {
+										$slug = $rel['slug'] ?? '';
+										$name = $rel['name'] ?? '';
 									}
+									if ( ! $slug && is_object($rel) && method_exists($rel, 'get_id') )    $slug = (string) $rel->get_id();
+									if ( ! $name && is_object($rel) && method_exists($rel, 'get_label') ) $name = (string) $rel->get_label();
+									$add($slug, $name);
 								}
 							}
 						}
@@ -228,7 +243,7 @@ final class BFR_Helpers {
 				}
 			}
 		} catch (\Throwable $e) {
-			// swallow
+			// swallow errors, return what we have
 		}
 
 		if ( ! empty($choices) ) natcasesort($choices);
@@ -237,7 +252,10 @@ final class BFR_Helpers {
 
 	/**
 	 * Return an assoc set of meta keys JetEngine defines for a CPT.
-	 * Reads both: CPT "Meta fields" and Meta Boxes targeting the CPT.
+	 * Reads both: CPT “Meta fields” and Meta Boxes targeting the CPT.
+	 *
+	 * @param  string $cpt
+	 * @return array [ meta_key => true, ... ]
 	 */
 	public static function get_jetengine_meta_keys_for_cpt( string $cpt ): array {
 		$keys = [];
