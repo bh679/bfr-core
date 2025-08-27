@@ -190,6 +190,7 @@ final class BFR_Admin {
 					$rel_module = $je->modules->get_module('relations');
 					if ($rel_module) {
 						$dump['modules_relations_class'] = get_class($rel_module);
+						$dump['manager_methods'] = (isset($je->relations) && is_object($je->relations)) ? get_class_methods($je->relations) : [];
 						if ( isset($rel_module->relations) ) {
 							$mgr = $rel_module->relations;
 							$dump['modules_relations_mgr_class'] = is_object($mgr) ? get_class($mgr) : gettype($mgr);
