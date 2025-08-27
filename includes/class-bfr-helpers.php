@@ -3,6 +3,80 @@ if ( ! defined('ABSPATH') ) exit;
 
 final class BFR_Helpers {
 
+	/** Return distinct meta keys used by posts of a CPT. Cached for 10 minutes. */
+	public static function get_meta_keys_for_cpt( string $cpt, int $limit = 300 ): array {
+        global $wpdb;
+        if ( $cpt === '' ) return [];
+
+        $cache_key = 'bfr_meta_keys_' . sanitize_key($cpt);
+        $cached    = get_transient($cache_key);
+        if ( is_array($cached) ) {
+            return $cached;
+        }
+
+        $sql = $wpdb->prepare(
+            "SELECT DISTINCT pm.meta_key
+             FROM {$wpdb->postmeta} pm
+             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+             WHERE p.post_type = %s
+               AND pm.meta_key <> ''
+             LIMIT %d",
+            $cpt, $limit
+        );
+        $rows = $wpdb->get_col($sql); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+        $keys = [];
+        if ( is_array($rows) ) {
+            // Filter out common internal/noisy keys
+            $skip_prefixes = [
+                '_edit_', '_thumbnail_id', '_elementor', '_wp_', '_aioseo_', '_yoast_',
+                '_oembed_', '_jet_', '_et_', '_wcfm_', '_wpf_', '_redux_', '_fl_builder_'
+            ];
+            foreach ( $rows as $k ) {
+                $k = (string) $k;
+                $skip = false;
+                foreach ( $skip_prefixes as $pref ) {
+                    if ( strpos($k, $pref) === 0 ) { $skip = true; break; }
+                }
+                if ( ! $skip ) {
+                    $keys[$k] = $k;
+                }
+            }
+        }
+
+        // Human sort & dedupe
+        $keys = array_values(array_unique($keys));
+        natcasesort($keys);
+        $keys = array_values($keys);
+
+        set_transient($cache_key, $keys, 10 * MINUTE_IN_SECONDS);
+        return $keys;
+    }
+
+    /** Convenience: return settings option with defaults merged. */
+    public static function get_opts(): array {
+        $defaults = [
+            'dest_cpt'            => 'destinations',
+            'school_cpt'          => 'freedive-school',
+            'je_relation'         => '',
+
+            // OUTPUT meta keys on Destination (admin-configured)
+            'out_school_count'     => 'school_count',
+            'out_max_depth'        => 'max_depth',
+            'out_min_course_price' => 'min_course_price',
+            'out_languages'        => 'languages',
+            'out_facilities'       => 'facilities',
+
+            // (Your existing INPUT/meta settings for School, etc., if any)
+            'meta_dest_id'         => 'destination_id',
+            'meta_max_depth'       => 'max_depth',
+            'meta_price'           => 'lowest_course_price',
+            'meta_languages'       => 'languages',
+            'meta_facilities'      => 'facilities',
+        ];
+        return wp_parse_args( get_option('bfr_core_options', []), $defaults );
+    }
+
 	/**
 	 * Return CPT choices suitable for a settings dropdown.
 	 * We include public post types with UI, minus built-in/system ones.

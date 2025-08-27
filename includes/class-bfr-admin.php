@@ -1,295 +1,241 @@
 <?php
 if ( ! defined('ABSPATH') ) exit;
 if ( ! class_exists('BFR_Helpers') ) {
-    // Don’t fatal if helpers failed to load for some reason.
     require_once dirname(__FILE__) . '/class-bfr-helpers.php';
 }
 
 final class BFR_Admin {
 
-	private static $instance = null;
+    private static $instance = null;
+    public static function instance() { return self::$instance ?: self::$instance = new self(); }
 
-	public static function instance() {
-		return self::$instance ?: self::$instance = new self();
-	}
+    private function __construct() {
+        add_action('admin_menu',  [$this, 'admin_menu']);
+        add_action('admin_init',  [$this, 'register_settings']);
+        add_action('admin_post_bfr_recalc', [$this, 'handle_recalc_now']);
+    }
 
-	private function __construct() {
-		add_action('admin_menu',  [$this, 'admin_menu']);
-		add_action('admin_init',  [$this, 'register_settings']);
-		add_action('admin_post_bfr_recalc', [$this, 'handle_recalc_now']);
-	}
+    public function admin_menu() {
+        add_options_page('BFR Core', 'BFR Core', 'manage_options', 'bfr-core', [$this, 'render_settings']);
+    }
 
-	/* ---------- Menu ---------- */
+    public function register_settings() {
+        register_setting('bfr_core_group', 'bfr_core_options', [
+            'sanitize_callback' => function($input){
+                $opts = BFR_Helpers::get_opts();
+                $input = is_array($input) ? $input : [];
 
-	public function admin_menu() {
-		add_options_page('BFR Core', 'BFR Core', 'manage_options', 'bfr-core', [$this, 'render_settings']);
-	}
+                // Validate CPTs
+                $valid_cpts = $this->get_cpt_choices();
+                $input['dest_cpt']   = (isset($input['dest_cpt'],   $valid_cpts[$input['dest_cpt']]))   ? $input['dest_cpt']   : $opts['dest_cpt'];
+                $input['school_cpt'] = (isset($input['school_cpt'], $valid_cpts[$input['school_cpt']])) ? $input['school_cpt'] : $opts['school_cpt'];
 
-	/* ---------- Settings & fields ---------- */
+                // Relation slug (optional string)
+                $input['je_relation'] = isset($input['je_relation']) ? sanitize_text_field((string)$input['je_relation']) : $opts['je_relation'];
 
-	public function register_settings() {
-		$agg = BFR_Aggregator::instance();
+                // Text inputs on School meta (your existing inputs)
+                foreach (['meta_dest_id','meta_max_depth','meta_price','meta_languages','meta_facilities'] as $k) {
+                    if (isset($input[$k])) $input[$k] = sanitize_text_field( (string) $input[$k] );
+                }
 
-		register_setting('bfr_core_group', 'bfr_core_options', [
-			'sanitize_callback' => function($input) use ($agg){
-				$input = is_array($input) ? $input : [];
+                // ---- Output meta keys on Destination (dropdown + custom)
+                foreach ([
+                    'out_school_count',
+                    'out_max_depth',
+                    'out_min_course_price',
+                    'out_languages',
+                    'out_facilities',
+                ] as $okey) {
+                    $sel_key = $okey . '_select';
+                    $selected = isset($input[$sel_key]) ? (string)$input[$sel_key] : '';
+                    $custom   = isset($input[$okey])     ? sanitize_text_field((string)$input[$okey]) : '';
 
-				// Allowed values for selects
-				$valid_cpts = BFR_Helpers::get_cpt_choices(); // slug => label
-				$valid_rel  = BFR_Helpers::get_relation_choices(); // slug => label (may be empty)
+                    if ($selected === '__custom__') {
+                        $input[$okey] = $custom;
+                    } else {
+                        // if dropdown picked a concrete key, store that; if empty, keep previous/default
+                        $input[$okey] = ($selected !== '') ? $selected : ($opts[$okey] ?? '');
+                    }
+                    unset($input[$sel_key]);
+                }
 
-				// Sanitize select fields
-				$input['dest_cpt']   = isset($input['dest_cpt'],   $valid_cpts[$input['dest_cpt']])   ? $input['dest_cpt']   : $agg->defaults()['dest_cpt'];
-				$input['school_cpt'] = isset($input['school_cpt'], $valid_cpts[$input['school_cpt']]) ? $input['school_cpt'] : $agg->defaults()['school_cpt'];
+                return wp_parse_args($input, $opts);
+            }
+        ]);
 
-				// Relation slug: allow blank or a known relation
-				if (isset($input['je_relation']) && $input['je_relation'] !== '') {
-					$input['je_relation'] = isset($valid_rel[$input['je_relation']]) ? $input['je_relation'] : $agg->defaults()['je_relation'];
-				} else {
-					$input['je_relation'] = ''; // explicitly disable relation path
-				}
+        add_settings_section('bfr_core_section', 'General Settings', function(){
+            echo '<p>Pick your CPTs, relation slug (optional), and mapping of aggregate outputs to Destination meta keys.</p>';
+        }, 'bfr-core');
 
-				// If a *_select companion exists and isn’t "__custom__", use that.
-				foreach (['meta_dest_id','meta_max_depth','meta_price','meta_languages','meta_facilities'] as $k) {
-					$sel = $k . '_select';
-					if ( isset($input[$sel]) && $input[$sel] !== '__custom__' ) {
-						$input[$k] = sanitize_text_field( (string) $input[$sel] );
-					} elseif ( isset($input[$k]) ) {
-						$input[$k] = sanitize_text_field( (string) $input[$k] );
-					}
-				}
+        // Destination CPT (select)
+        add_settings_field('dest_cpt', 'Destination CPT Slug', function(){
+            $opts = BFR_Helpers::get_opts();
+            $choices = $this->get_cpt_choices();
+            echo '<select name="bfr_core_options[dest_cpt]">';
+            foreach ($choices as $slug => $label) {
+                printf('<option value="%s"%s>%s</option>',
+                    esc_attr($slug),
+                    selected($opts['dest_cpt'], $slug, false),
+                    esc_html($label . " ($slug)")
+                );
+            }
+            echo '</select>';
+            echo '<p class="description">This CPT will receive the aggregated fields (output).</p>';
+        }, 'bfr-core', 'bfr_core_section');
 
-				// Backfill any missing keys with defaults
-				return wp_parse_args($input, $agg->defaults());
-			}
-		]);
+        // School CPT (select)
+        add_settings_field('school_cpt', 'School CPT Slug', function(){
+            $opts = BFR_Helpers::get_opts();
+            $choices = $this->get_cpt_choices();
+            echo '<select name="bfr_core_options[school_cpt]">';
+            foreach ($choices as $slug => $label) {
+                printf('<option value="%s"%s>%s</option>',
+                    esc_attr($slug),
+                    selected($opts['school_cpt'], $slug, false),
+                    esc_html($label . " ($slug)")
+                );
+            }
+            echo '</select>';
+        }, 'bfr-core', 'bfr_core_section');
 
-		add_settings_section('bfr_core_section', 'General Settings', function(){
-			echo '<p>Pick your CPTs, relation slug (optional), and meta keys used for aggregation.</p>';
-		}, 'bfr-core');
+        // JetEngine Relation (optional text)
+        add_settings_field('je_relation', 'JetEngine Relation Slug', function(){
+            $opts = BFR_Helpers::get_opts();
+            printf('<input type="text" class="regular-text" name="bfr_core_options[je_relation]" value="%s" placeholder="%s" />',
+                esc_attr($opts['je_relation']),
+                esc_attr('e.g. destination-to-school (leave blank to use meta only)')
+            );
+        }, 'bfr-core', 'bfr_core_section');
 
-		// Destination CPT (select)
-		add_settings_field('dest_cpt', 'Destination CPT Slug', function(){
-			$agg   = BFR_Aggregator::instance();
-			$opts  = wp_parse_args( get_option('bfr_core_options', []), $agg->defaults() );
-			$choices = BFR_Helpers::get_cpt_choices();
-			echo '<select name="bfr_core_options[dest_cpt]">';
-			foreach ($choices as $slug => $label) {
-				printf('<option value="%s"%s>%s</option>',
-					esc_attr($slug),
-					selected($opts['dest_cpt'], $slug, false),
-					esc_html($label . " ($slug)")
-				);
-			}
-			echo '</select>';
-		}, 'bfr-core', 'bfr_core_section');
+        // ---- Output meta pickers (Destination)
+        $this->add_dest_output_meta_picker('out_school_count',     'Destination Output → School Count key');
+        $this->add_dest_output_meta_picker('out_max_depth',        'Destination Output → Max Depth key');
+        $this->add_dest_output_meta_picker('out_min_course_price', 'Destination Output → Min Course Price key');
+        $this->add_dest_output_meta_picker('out_languages',        'Destination Output → Languages key');
+        $this->add_dest_output_meta_picker('out_facilities',       'Destination Output → Facilities key');
+    }
 
-		// School CPT (select)
-		add_settings_field('school_cpt', 'School CPT Slug', function(){
-			$agg   = BFR_Aggregator::instance();
-			$opts  = wp_parse_args( get_option('bfr_core_options', []), $agg->defaults() );
-			$choices = BFR_Helpers::get_cpt_choices();
-			echo '<select name="bfr_core_options[school_cpt]">';
-			foreach ($choices as $slug => $label) {
-				printf('<option value="%s"%s>%s</option>',
-					esc_attr($slug),
-					selected($opts['school_cpt'], $slug, false),
-					esc_html($label . " ($slug)")
-				);
-			}
-			echo '</select>';
-		}, 'bfr-core', 'bfr_core_section');
+    private function add_dest_output_meta_picker( string $opt_key, string $label ) {
+        add_settings_field($opt_key, $label, function() use ($opt_key, $label){
+            $opts  = BFR_Helpers::get_opts();
+            $cpt   = $opts['dest_cpt'] ?? 'destinations';
+            $list  = BFR_Helpers::get_meta_keys_for_cpt( $cpt );
+            $current = (string) ($opts[$opt_key] ?? '');
 
-		// JetEngine Relation (select; blank allowed; fallback to text input if none)
-		add_settings_field('je_relation', 'JetEngine Relation Slug', function(){
-			$agg     = BFR_Aggregator::instance();
-			$opts    = wp_parse_args( get_option('bfr_core_options', []), $agg->defaults() );
-			$choices = BFR_Helpers::get_relation_choices();
+            // If saved value isn’t in list, default the dropdown to "Custom…"
+            $use_custom = $current !== '' && ! in_array( $current, $list, true );
 
-			if (!empty($choices)) {
-				echo '<select name="bfr_core_options[je_relation]">';
-				printf('<option value=""%s>%s</option>', selected($opts['je_relation'], '', false), esc_html('— Disabled (use meta only) —'));
-				foreach ($choices as $slug => $label) {
-					printf(
-						'<option value="%s"%s>%s</option>',
-						esc_attr($slug),
-						selected($opts['je_relation'], $slug, false),
-						esc_html($label . " ($slug)")
-					);
-				}
-				echo '</select>';
-				echo '<p class="description">Pick your JetEngine relation, or choose Disabled to rely on the School meta key only.</p>';
-			} else {
-				printf(
-					'<input type="text" class="regular-text" name="bfr_core_options[je_relation]" value="%s" placeholder="%s" />',
-					esc_attr($opts['je_relation']),
-					esc_attr('e.g. destination-to-school (leave blank to disable)')
-				);
-				echo '<p class="description">No JetEngine relations detected. If you have one, type its slug manually or leave blank to disable.</p>';
-			}
-		}, 'bfr-core', 'bfr_core_section');
+            $select_name = 'bfr_core_options[' . esc_attr($opt_key) . '_select]';
+            $input_name  = 'bfr_core_options[' . esc_attr($opt_key) . ']';
 
-		// Meta key pickers
-		$meta_labels = [
-			'meta_dest_id'    => 'School Meta → Destination ID key',
-			'meta_max_depth'  => 'School Meta: Max Depth key',
-			'meta_price'      => 'School Meta: Lowest Course Price key',
-			'meta_languages'  => 'School Meta: Languages key',
-			'meta_facilities' => 'School Meta: Facilities key',
-		];
-		foreach ( $meta_labels as $key => $label ) {
-			add_settings_field($key, $label, function() use ($key, $label){
-				$agg  = BFR_Aggregator::instance();
-				$opts = wp_parse_args( get_option('bfr_core_options', []), $agg->defaults() );
-				echo BFR_Helpers::meta_key_picker_html( $key, $label, $opts ); // dropdown + custom input
-			}, 'bfr-core', 'bfr_core_section');
-		}
-	}
+            echo '<select name="'. esc_attr($select_name) .'" data-bfr-target="'. esc_attr($opt_key) .'">';
+            printf('<option value="" %s>%s</option>', selected(!$use_custom && $current === '', true, false), esc_html('— Select meta key —'));
+            foreach ( $list as $key ) {
+                printf('<option value="%1$s" %2$s>%1$s</option>',
+                    esc_attr($key),
+                    selected(!$use_custom && $current === $key, true, false)
+                );
+            }
+            printf('<option value="__custom__" %s>%s</option>',
+                selected($use_custom, true, false),
+                esc_html('Custom…')
+            );
+            echo '</select> ';
 
-	public function render_settings() {
-		if ( ! current_user_can('manage_options') ) return;
+            printf(
+                '<input type="text" class="regular-text bfr-meta-custom %4$s" data-bfr-for="%1$s" name="%2$s" value="%3$s" aria-label="%5$s" placeholder="%6$s" />',
+                esc_attr($opt_key),
+                esc_attr($input_name),
+                esc_attr($current),
+                $use_custom ? '' : 'hidden',
+                esc_attr($label),
+                esc_attr('Type meta key (when using “Custom…”)')
+            );
 
-		$agg  = BFR_Aggregator::instance();
-		$opts = wp_parse_args( get_option('bfr_core_options', []), $agg->defaults() );
+            // One-time JS to toggle the custom input
+            static $printed_js = false;
+            if ( ! $printed_js ) {
+                $printed_js = true;
+                ?>
+                <script>
+                document.addEventListener('change', function(ev){
+                    var sel = ev.target;
+                    if (!sel.matches('select[name^="bfr_core_options"][name$="_select]"]')) return;
+                    var key = sel.getAttribute('data-bfr-target');
+                    var input = document.querySelector('input.bfr-meta-custom[data-bfr-for="'+key+'"]');
+                    if (!input) return;
+                    if (sel.value === '__custom__') {
+                        input.classList.remove('hidden');
+                        input.removeAttribute('hidden');
+                        input.focus();
+                    } else {
+                        input.value = sel.value || '';
+                        input.classList.add('hidden');
+                        input.setAttribute('hidden','hidden');
+                    }
+                });
+                </script>
+                <style>.hidden{display:none}</style>
+                <?php
+            }
+            echo '<p class="description">Dropdown lists existing meta keys on the Destination CPT. Choose “Custom…” to type a new key.</p>';
+        }, 'bfr-core', 'bfr_core_section');
+    }
 
-		$dest_cpt = $opts['dest_cpt'] ?? 'destinations';
+    public function render_settings() {
+        if ( ! current_user_can('manage_options') ) return;
+        $opts = BFR_Helpers::get_opts();
+        ?>
+        <div class="wrap">
+            <h1>BFR Core</h1>
+            <form method="post" action="options.php">
+                <?php settings_fields('bfr_core_group'); ?>
+                <?php do_settings_sections('bfr-core'); ?>
+                <?php submit_button('Save Changes'); ?>
+            </form>
 
-		// BFR aggregate meta we expect
-		$expected_meta = [
-			'bfr_school_count'     => 'integer',
-			'bfr_max_depth'        => 'number',
-			'bfr_min_course_price' => 'number',
-			'bfr_languages'        => 'string',
-			'bfr_facilities'       => 'string',
-		];
+            <hr/>
+            <h2>Maintenance</h2>
+            <form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>">
+                <input type="hidden" name="action" value="bfr_recalc" />
+                <?php wp_nonce_field('bfr_recalc_now'); ?>
+                <?php submit_button('Recalculate all now', 'secondary'); ?>
+            </form>
 
-		// WordPress registry check
-		$registered = function_exists('get_registered_meta_keys')
-			? ( get_registered_meta_keys( 'post', $dest_cpt ) ?: [] )
-			: [];
+            <hr/>
+            <h2>Diagnostics</h2>
+            <ul>
+                <li><strong>Destination CPT:</strong> <?php echo esc_html($opts['dest_cpt']); ?></li>
+                <li><strong>Output keys:</strong>
+                    school_count=<code><?php echo esc_html($opts['out_school_count']); ?></code>,
+                    max_depth=<code><?php echo esc_html($opts['out_max_depth']); ?></code>,
+                    min_course_price=<code><?php echo esc_html($opts['out_min_course_price']); ?></code>,
+                    languages=<code><?php echo esc_html($opts['out_languages']); ?></code>,
+                    facilities=<code><?php echo esc_html($opts['out_facilities']); ?></code>
+                </li>
+            </ul>
+        </div>
+        <?php
+    }
 
-		// JetEngine UI check (CPT meta fields + meta boxes)
-		$je_defined = BFR_Helpers::get_jetengine_meta_keys_for_cpt( $dest_cpt );
+    public function handle_recalc_now() {
+        if ( ! current_user_can('manage_options') || ! check_admin_referer('bfr_recalc_now') ) {
+            wp_die('Not allowed');
+        }
+        BFR_Aggregator::instance()->cron_recalculate_all();
+        wp_safe_redirect( add_query_arg('bfr_recalc_done', '1', wp_get_referer() ?: admin_url('options-general.php?page=bfr-core') ) );
+        exit;
+    }
 
-		$rows = [];
-		foreach ( $expected_meta as $key => $want_type ) {
-			$exists = isset( $registered[ $key ] );
-			$type   = $exists ? ( $registered[ $key ]['type'] ?? '(unknown)' ) : '(not registered)';
-			$rest   = $exists && ! empty( $registered[ $key ]['show_in_rest'] ) ? 'on' : 'off';
-			$ok     = $exists && ( $type === $want_type ) && ( $rest === 'on' );
-			$in_je  = isset( $je_defined[ $key ] );
-
-			$rows[] = [
-				'key'   => $key,
-				'exists'=> $exists,
-				'type'  => $type,
-				'rest'  => $rest,
-				'ok'    => $ok,
-				'in_je' => $in_je,
-				'msg'   => $ok ? 'OK' : ( $exists ? 'Type/REST mismatch' : 'Not registered' ),
-			];
-		}
-		?>
-		<div class="wrap">
-			<h1>BFR Core</h1>
-			<form method="post" action="options.php">
-				<?php settings_fields('bfr_core_group'); ?>
-				<?php do_settings_sections('bfr-core'); ?>
-				<?php submit_button('Save Changes'); ?>
-			</form>
-
-			<hr/>
-			<h2>Maintenance</h2>
-			<p>Run a full recompute of all Destinations (safe anytime).</p>
-			<form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>">
-				<input type="hidden" name="action" value="bfr_recalc" />
-				<?php wp_nonce_field('bfr_recalc_now'); ?>
-				<?php submit_button('Recalculate all now', 'secondary'); ?>
-			</form>
-
-			<hr/>
-			<h2>Destination Meta Registration Status</h2>
-			<p>Confirm that aggregate meta keys are registered for <code><?php echo esc_html($dest_cpt); ?></code> and whether they are also defined in JetEngine (so they appear in the Elementor dropdown).</p>
-			<table class="widefat striped" style="max-width:980px">
-				<thead>
-					<tr>
-						<th>Meta key</th>
-						<th>Status</th>
-						<th>Type</th>
-						<th>REST</th>
-						<th>JE UI</th>
-						<th>Notes</th>
-					</tr>
-				</thead>
-				<tbody>
-				<?php foreach ( $rows as $r ) : ?>
-					<tr>
-						<td><code><?php echo esc_html($r['key']); ?></code></td>
-						<td><?php echo $r['ok'] ? '✅ Registered' : ( $r['exists'] ? '⚠️ Issue' : '❌ Missing' ); ?></td>
-						<td><?php echo esc_html($r['type']); ?></td>
-						<td><?php echo $r['rest'] === 'on' ? 'on' : 'off'; ?></td>
-						<td><?php echo $r['in_je'] ? '✅ yes' : '—'; ?></td>
-						<td><?php echo esc_html($r['msg']); ?></td>
-					</tr>
-				<?php endforeach; ?>
-				</tbody>
-			</table>
-			<p class="description" style="max-width:980px">
-				<strong>JE UI</strong> = whether JetEngine defines the field (in the CPT’s “Meta fields” or a Meta Box targeting this CPT).<br>
-				To add: JetEngine → Post Types → <em>Destinations</em> → Meta fields, or JetEngine → Meta Boxes (target post type <em><?php echo esc_html($dest_cpt); ?></em>).
-			</p>
-
-			<hr/>
-			<h2>Diagnostics</h2>
-			<ul>
-				<li><strong>Destination CPT:</strong> <?php echo esc_html($opts['dest_cpt']); ?></li>
-				<li><strong>School CPT:</strong> <?php echo esc_html($opts['school_cpt']); ?></li>
-				<li><strong>Relation slug:</strong> <?php echo $opts['je_relation'] ? esc_html($opts['je_relation']) : '<em>disabled</em>'; ?></li>
-				<li><strong>Meta keys:</strong>
-					dest_id=<code><?php echo esc_html($opts['meta_dest_id']); ?></code>,
-					max_depth=<code><?php echo esc_html($opts['meta_max_depth']); ?></code>,
-					price=<code><?php echo esc_html($opts['meta_price']); ?></code>,
-					langs=<code><?php echo esc_html($opts['meta_languages']); ?></code>,
-					facils=<code><?php echo esc_html($opts['meta_facilities']); ?></code>
-				</li>
-			</ul>
-
-			<?php if ( isset($_GET['bfr_debug']) && current_user_can('manage_options') ) : ?>
-				<hr/>
-				<h2>Debug: JetEngine relations snapshot</h2>
-				<pre style="max-height:300px;overflow:auto;background:#fafafa;border:1px solid #ddd;padding:10px;"><?php
-					$dump = [];
-					try {
-						$dump['has_function_jet_engine'] = function_exists('jet_engine');
-						if ( function_exists('jet_engine') ) {
-							$je = jet_engine();
-							$dump['has_relations_prop'] = isset($je->relations);
-							if ( isset($je->modules) && method_exists($je->modules, 'get_module') ) {
-								$rel_module = $je->modules->get_module('relations');
-								if ($rel_module) {
-									$dump['component_relations_class'] = get_class($rel_module);
-								}
-							}
-						}
-					} catch (\Throwable $e) {
-						$dump['error'] = $e->getMessage();
-					}
-					echo esc_html( print_r($dump, true) );
-				?></pre>
-				<p class="description">Open this page with <code>&bfr_debug=1</code> to see this panel.</p>
-			<?php endif; ?>
-		</div>
-		<?php
-	}
-
-	/* ---------- Handlers ---------- */
-
-	public function handle_recalc_now() {
-		if ( ! current_user_can('manage_options') || ! check_admin_referer('bfr_recalc_now') ) {
-			wp_die('Not allowed');
-		}
-		BFR_Aggregator::instance()->cron_recalculate_all();
-		wp_safe_redirect( add_query_arg('bfr_recalc_done', '1', wp_get_referer() ?: admin_url('options-general.php?page=bfr-core') ) );
-		exit;
-	}
+    private function get_cpt_choices(): array {
+        $builtin_exclude = ['attachment','revision','nav_menu_item','custom_css','customize_changeset','oembed_cache','user_request','wp_block','wp_template','wp_template_part','wp_navigation','elementor_library'];
+        $types = get_post_types(['show_ui' => true], 'objects');
+        $out = [];
+        foreach ($types as $slug => $obj) {
+            if ( in_array($slug, $builtin_exclude, true) ) continue;
+            $out[$slug] = $obj->labels->singular_name ?: $obj->label ?: $slug;
+        }
+        natcasesort($out);
+        return $out;
+    }
 }
