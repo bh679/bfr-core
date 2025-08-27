@@ -26,4 +26,19 @@ register_deactivation_hook( BFR_CORE_FILE, ['BFR_Aggregator', 'deactivate_static
 add_action('plugins_loaded', function () {
     BFR_Aggregator::instance(); // logic, cron, triggers
     BFR_Admin::instance();      // settings UI
+
+    add_action('init', function () {
+	$cpt = get_option('bfr_core_options')['dest_cpt'] ?? 'destinations';
+
+	$common = ['object_subtype' => $cpt, 'single' => true, 'show_in_rest' => true, 'auth_callback' => '__return_true'];
+
+	register_meta('post', 'bfr_school_count',     $common + ['type' => 'integer']);
+	register_meta('post', 'bfr_max_depth',        $common + ['type' => 'number']);
+	register_meta('post', 'bfr_min_course_price', $common + ['type' => 'number']);
+
+	register_meta('post', 'bfr_languages',        $common + ['type' => 'string']);
+	register_meta('post', 'bfr_facilities',       $common + ['type' => 'string']);
+	register_meta('post', 'bfr_languages_array',  $common + ['type' => 'string']); // JSON string
+	register_meta('post', 'bfr_facilities_array', $common + ['type' => 'string']); // JSON string
+});
 });
