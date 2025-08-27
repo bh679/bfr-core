@@ -99,23 +99,17 @@ final class Admin {
 			    return ($v !== '' && preg_match('/^[a-z][a-z0-9_\-]*$/', $v)) ? $v : $fallback;
 			};
 
-			foreach ([
-			    'dest_meta_school_count',
-			    'dest_meta_max_depth',
-			    'dest_meta_min_course_price',
-			    'dest_meta_languages',
-			    'dest_meta_facilities',
-			    'dest_meta_languages_array',
-			    'dest_meta_facilities_array',
-			] as $k) {
-			    $sel = $k . '_select';
-			    if (isset($input[$sel]) && $input[$sel] !== '__custom__') {
-			        // From dropdown list
-			        $input[$k] = sanitize_text_field((string) $input[$sel]);
-			    } else {
-			        // From custom textbox (or fallback to default)
-			        $input[$k] = $sanitize_key_name($input[$k] ?? '', $defaults[$k]);
-			    }
+			foreach ($dest_fields as $key => $label) {
+			    add_settings_field($key, $label, function() use ($key, $label) {
+			        $agg   = Aggregator::instance();
+			        $defs  = $agg->defaults();
+			        $opts  = wp_parse_args(get_option(\BFR_CORE_OPTION, []), $defs);
+			        $cpt   = $opts['dest_cpt'] ?? 'destinations';
+			        $def_v = $defs[$key] ?? ''; // plugin’s default key for this output
+
+			        echo Helpers::meta_key_picker_html($key, $label, $opts, $cpt, $def_v);
+			        echo '<p class="description">Letters, numbers, underscore, hyphen. Must start with a letter.</p>';
+			    }, 'bfr-core', 'bfr_core_dest_keys');
 			}
 
 		    // --- If you plan to support migration later, snapshot the pre-change options here ---
