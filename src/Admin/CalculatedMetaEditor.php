@@ -285,7 +285,7 @@ final class CalculatedMetaEditor
      * Render the Calculator Editor page.
      * - Asks for Input CPT (once) and Target CPT (once).
      * - Displays a table with one row per calculator:
-     *     columns: Name, Target Meta Key, Input Meta Keys (multi)
+     *     columns: Name (label only + description), Target Meta Key (single), Input Meta Keys (multi)
      * - Uses the helper functions for dropdowns with "Custom…" and meta key discovery.
      */
     public function render_editor(): void
@@ -352,34 +352,33 @@ final class CalculatedMetaEditor
         echo '<h2>Calculators</h2>';
         echo '<table class="widefat fixed striped">';
         echo '<thead><tr>';
-        echo '<th style="width:25%">Name</th>';
-        echo '<th style="width:35%">Target Meta Key</th>';
+        echo '<th style="width:30%">Calculator</th>';
+        echo '<th style="width:30%">Target Meta Key</th>';
         echo '<th style="width:40%">Input Meta Keys</th>';
         echo '</tr></thead><tbody>';
 
         foreach ($this->registry as $slug => $cfg) {
-            $name  = (string)($cfg['name'] ?? $slug);
-            $tmeta = (string)($cfg['target_meta_key'] ?? '');
-            $imeta = (array)($cfg['input_meta_keys'] ?? []);
+            $name        = (string)($cfg['name'] ?? $slug);
+            $description = (string)($cfg['description'] ?? '');
+            $tmeta       = (string)($cfg['target_meta_key'] ?? '');
+            $imeta       = (array)($cfg['input_meta_keys'] ?? []);
 
-            // If the existing keys are JSON-encoded, normalize to strings
+            // Ensure string values for display
             $imeta = array_map(static fn($v) => (string)$v, $imeta);
 
             echo '<tr>';
-            // Column: Name
+
+            // Column: Name (label only) + Description (below)
             echo '<td>';
-            echo '<strong><code>'.esc_html($slug).'</code></strong><br />';
-            printf(
-                '<input type="text" name="name[%s]" value="%s" class="regular-text" />',
-                esc_attr($slug),
-                esc_attr($name)
-            );
+            echo '<strong>'.esc_html($name).'</strong><br/>';
+            echo '<code>'.esc_html($slug).'</code>';
+            if ($description !== '') {
+                echo '<p style="margin:6px 0 0;color:#555;">'.esc_html($description).'</p>';
+            }
             echo '</td>';
 
             // Column: Target Meta Key (single select-with-custom)
             echo '<td>';
-            // Selector depends on TARGET CPT chosen above; we’ll resolve actual CPT on save.
-            // For discovery here, we use current default target CPT guess:
             echo $this->render_meta_key_selector('target_meta_key['.$slug.']', $default_target_cpt, $tmeta, '');
             echo '<p class="description">Select a known key or pick <em>Custom…</em> and type your own.</p>';
             echo '</td>';
@@ -475,8 +474,10 @@ final class CalculatedMetaEditor
     /**
      * Handle form submission.
      * - Saves global input/target CPTs and relation key.
-     * - Saves each calculator row: name, target_meta_key (incl. custom), input_meta_keys[] (incl. custom entries).
+     * - Saves each calculator row: target_meta_key (incl. custom), input_meta_keys[] (incl. custom entries).
      * - Writes everything into options as overrides keyed by slug.
+     *
+     * NOTE: We no longer save "name" (since name is label-only in the UI).
      */
     public function handle_save(): void
     {
@@ -498,8 +499,7 @@ final class CalculatedMetaEditor
 
         $relation_global = sanitize_key($_POST['relation_meta_key_global'] ?? '');
 
-        // Per-row arrays
-        $names           = is_array($_POST['name'] ?? null) ? (array)$_POST['name'] : [];
+        // Per-row arrays (names removed: we no longer edit/save calculator names)
         $target_meta     = is_array($_POST['target_meta_key'] ?? null) ? (array)$_POST['target_meta_key'] : [];
         $input_meta_all  = is_array($_POST['input_meta_keys'] ?? null) ? (array)$_POST['input_meta_keys'] : [];
 
@@ -513,14 +513,35 @@ final class CalculatedMetaEditor
         foreach ($this->registry as $slug => $cfg) {
             $slug_key = sanitize_key((string)$slug);
 
-            // Name
-            $name_val = isset($names[$slug_key]) ? sanitize_text_field($names[$slug_key]) : ($cfg['name'] ?? $slug_key);
-
             // Target meta key (could be "__custom__")
             $t_sel = isset($target_meta[$slug_key]) ? sanitize_text_field($target_meta[$slug_key]) : '';
-            $t_key = ($t_sel === '__custom__')
-                ? sanitize_key($_POST['target_meta_key'][$slug_key . '_custom'] ?? ($_POST['target_meta_key'][$slug_key . '']['_custom'] ?? ($_POST['target_meta_key'][$slug_key . '_custom'] ?? '')))
-                : sanitize_key($t_sel);
+            // Attempt to resolve the custom companion field with robust fallbacks
+            if ($t_sel === '__custom__') {
+                $t_key = '';
+                // Common patterns for the companion name generated by render_select_with_custom:
+                // 1) target_meta_key[slug]_custom
+                // 2) target_meta_key_custom[slug]
+                if (isset($_POST['target_meta_key'][$slug_key . '_custom'])) {
+                    $t_key = (string)$_POST['target_meta_key'][$slug_key . '_custom'];
+                } elseif (isset($_POST['target_meta_key_custom'][$slug_key])) {
+                    $t_key = (string)$_POST['target_meta_key_custom'][$slug_key];
+                } else {
+                    // Last-resort scans for any posted key that matches the pattern
+                    foreach ($_POST as $k => $v) {
+                        if (is_array($v) && str_starts_with((string)$k, 'target_meta_key')) {
+                            foreach ($v as $subk => $subv) {
+                                if ((string)$subk === $slug_key . '_custom') {
+                                    $t_key = (string)$subv;
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
+                }
+                $t_key = sanitize_key($t_key);
+            } else {
+                $t_key = sanitize_key($t_sel);
+            }
 
             // Input meta keys (array of values, each may be "__custom__")
             $im_arr = isset($input_meta_all[$slug_key]) && is_array($input_meta_all[$slug_key])
@@ -534,18 +555,24 @@ final class CalculatedMetaEditor
                     continue;
                 }
                 if ($sel === '__custom__') {
-                    // Custom text field is posted as "{$base}[index]_custom"
-                    $custom_name = 'input_meta_keys';
-                    // Access via the posted structure:
-                    // $_POST['input_meta_keys'][slug][index.'_custom'] OR [index]_custom depending on PHP form parsing.
+                    // Companion custom field naming patterns:
+                    // 1) input_meta_keys[slug][idx]_custom
+                    // 2) input_meta_keys_custom[slug][idx]
                     $custom_val = '';
-                    // Try a few sensible keys due to PHP array parsing differences:
-                    if (isset($_POST[$custom_name][$slug_key][$idx . '_custom'])) {
-                        $custom_val = (string)$_POST[$custom_name][$slug_key][$idx . '_custom'];
-                    } elseif (isset($_POST[$custom_name][$slug_key][$idx]['_custom'])) {
-                        $custom_val = (string)$_POST[$custom_name][$slug_key][$idx]['_custom'];
-                    } elseif (isset($_POST[$custom_name][$slug_key . '_custom'][$idx])) {
-                        $custom_val = (string)$_POST[$custom_name][$slug_key . '_custom'][$idx];
+                    if (isset($_POST['input_meta_keys'][$slug_key][$idx . '_custom'])) {
+                        $custom_val = (string)$_POST['input_meta_keys'][$slug_key][$idx . '_custom'];
+                    } elseif (isset($_POST['input_meta_keys_custom'][$slug_key][$idx])) {
+                        $custom_val = (string)$_POST['input_meta_keys_custom'][$slug_key][$idx];
+                    } else {
+                        // Last-resort scan
+                        foreach ($_POST as $k => $v) {
+                            if (is_array($v) && str_starts_with((string)$k, 'input_meta_keys')) {
+                                if (isset($v[$slug_key][$idx . '_custom'])) {
+                                    $custom_val = (string)$v[$slug_key][$idx . '_custom'];
+                                    break;
+                                }
+                            }
+                        }
                     }
                     $custom_val = sanitize_key($custom_val);
                     if ($custom_val !== '') {
@@ -556,12 +583,11 @@ final class CalculatedMetaEditor
                 }
             }
 
-            // Build/merge override record for this slug
+            // Build/merge override record for this slug (no "name" saved)
             $overrides[$slug_key] = array_merge($overrides[$slug_key] ?? [], [
-                'name'              => $name_val,
                 'target_cpt_id'     => $target_cpt_val,
                 'target_meta_key'   => $t_key,
-                'input_cpt_id'      => [$input_cpt_val], // single global input CPT (stored as array to match schema)
+                'input_cpt_id'      => [$input_cpt_val], // store as array to match schema
                 'input_meta_keys'   => array_values(array_unique($final_input_keys)),
                 'relation_meta_key' => $relation_global,
             ]);
