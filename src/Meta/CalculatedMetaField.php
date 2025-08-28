@@ -139,12 +139,12 @@ abstract class CalculatedMetaField
             'post_status'    => 'publish',
             'posts_per_page' => -1,
             'meta_query'     => [[
-                'key'   => $this->relation_meta_key,
-                'value' => (string)$target_post_id,
+                'key'     => $this->relation_meta_key,
+                'value'   => (string)$target_post_id,
                 'compare' => '=',
             ]],
             'no_found_rows'  => true,
-            'fields'         => 'all',
+            // 'fields' => 'all', // removed: undocumented; default returns full posts
         ]);
         return is_wp_error($q) ? [] : ($q->posts ?? []);
     }
@@ -175,7 +175,7 @@ abstract class CalculatedMetaField
             $arr = [];
         }
 
-        // Normalize: trim, lowercase then title case for consistent display, drop empties
+        // Normalize: trim, lowercase (mbstring fallback) then title case for consistent display, drop empties
         $norm = [];
         foreach ($arr as $v) {
             if (! is_scalar($v)) {
@@ -185,7 +185,8 @@ abstract class CalculatedMetaField
             if ($s === '') {
                 continue;
             }
-            $s = Str::title_case(mb_strtolower($s));
+            $lower = function_exists('mb_strtolower') ? mb_strtolower($s) : strtolower($s);
+            $s = Str::title_case($lower);
             $norm[$s] = true; // unique
         }
         $out = array_keys($norm);
