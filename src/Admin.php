@@ -274,16 +274,6 @@ final class Admin {
 			delete_site_transient($dk1);
 			delete_site_transient($dk2);
 
-			/**
-			 * Optional: let advanced setups flush a wider cache layer (e.g. object cache).
-			 * Return true from this filter to run wp_cache_flush(); default is false.
-			 */
-			if (apply_filters('bfr_core_flush_object_cache_on_refresh', false)) {
-				if (function_exists('wp_cache_flush')) {
-					wp_cache_flush();
-				}
-			}
-
 			// Show admin notice
 			add_settings_error(
 				'bfr-core',
