@@ -150,12 +150,22 @@ final class Admin {
 			$opts    = wp_parse_args(get_option(\BFR_CORE_OPTION, []), $agg->defaults());
 			$choices = Helpers::get_cpt_choices();
 			echo '<select name="'.esc_attr(\BFR_CORE_OPTION).'[dest_cpt]">';
-			foreach ($choices as $slug => $label) {
-				printf('<option value="%s"%s>%s</option>',
-					esc_attr($slug),
-					selected($opts['dest_cpt'], $slug, false),
-					esc_html($label . " ($slug)")
-				);
+			foreach ($dest_fields as $key => $label) {
+			    add_settings_field($key, $label, function() use ($key, $label) {
+			        $agg  = Aggregator::instance();
+			        $opts = wp_parse_args(get_option(\BFR_CORE_OPTION, []), $agg->defaults());
+
+			        // IMPORTANT: use Destination CPT and restrict to JetEngine-active, user-visible keys
+			        echo Helpers::meta_key_picker_html(
+			            $key,
+			            $label,
+			            $opts,
+			            $opts['dest_cpt'] ?? 'destinations',
+			            true // <-- only_jetengine_active
+			        );
+
+			        echo '<p class="description">Letters, numbers, underscore, hyphen. Must start with a letter.</p>';
+			    }, 'bfr-core', 'bfr_core_dest_keys');
 			}
 			echo '</select>';
 		}, 'bfr-core', 'bfr_core_section');

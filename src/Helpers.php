@@ -117,97 +117,99 @@ final class Helpers {
 	}
 
 
-public static function meta_key_picker_html(
-    string $opt_key,
-    string $label,
-    array $opts,
-    ?string $cpt_slug = null,
-    ?string $default_value = null   // NEW: what we want to use if CPT doesn't have it yet
-) : string {
-    // Use caller's CPT or fall back to school CPT for legacy callers
-    $cpt = $cpt_slug ?: ( isset($opts['school_cpt']) && is_string($opts['school_cpt']) ? $opts['school_cpt'] : 'freedive-school' );
+	public static function meta_key_picker_html(
+	    string $opt_key,                  // The option key name (e.g., 'dest_meta_school_count')
+	    string $label,                    // Human-readable label for this field
+	    array $opts,                      // Current saved plugin options
+	    ?string $cpt_slug = null,         // Optional CPT slug override (otherwise uses school_cpt or a default)
+	    bool $only_jetengine_active = false // Flag: show only JetEngine active meta keys instead of all DB keys
+	) : string {
+	    // Decide which CPT to pull meta keys from.
+	    // If a CPT slug is provided, use it. Otherwise, fall back to school_cpt option, or 'freedive-school'.
+	    $cpt = $cpt_slug ?: ( isset($opts['school_cpt']) && is_string($opts['school_cpt'])
+	        ? $opts['school_cpt'] : 'freedive-school' );
 
-    // Keys that actually exist on this CPT (DB-backed only)
-    $list = self::get_meta_key_choices_for_cpt($cpt);
-    // Keep them as a set for fast lookup
-    $present = array_fill_keys($list, true);
+	    // Decide which list of meta keys to show:
+	    // - If only JetEngine active keys are requested, call the helper for JE keys.
+	    // - Otherwise, fall back to all DB-discovered keys for that CPT.
+	    $list = $only_jetengine_active
+	        ? self::get_user_visible_jetengine_meta_keys_for_cpt($cpt)
+	        : self::get_meta_key_choices_for_cpt($cpt);
 
-    // Current option value (if any) and the plugin default
-    $current_opt   = isset($opts[$opt_key]) ? (string) $opts[$opt_key] : '';
-    $default_value = is_string($default_value) ? $default_value : (isset($opts[$opt_key]) ? (string) $opts[$opt_key] : '');
+	    // Figure out what value is currently saved for this option (or empty if none).
+	    $current    = isset($opts[$opt_key]) ? (string) $opts[$opt_key] : '';
 
-    // Decide selection:
-    // 1) If user saved something previously and it exists on CPT -> select it
-    // 2) Else if user saved something previously (but not present) -> Custom with that value
-    // 3) Else (first load) -> if default exists on CPT select it, otherwise Custom with default prefilled
-    $select_value = '';
-    $custom_value = '';
-    $use_custom   = false;
+	    // Decide if the current value should be treated as "Custom".
+	    // It’s "custom" if it’s not blank AND it’s not in the dropdown list.
+	    $use_custom = $current !== '' && !in_array($current, $list, true);
 
-    if ($current_opt !== '') {
-        if (isset($present[$current_opt])) {
-            $select_value = $current_opt;
-        } else {
-            $use_custom   = true;
-            $custom_value = $current_opt;
-        }
-    } else {
-        if ($default_value !== '' && isset($present[$default_value])) {
-            $select_value = $default_value;
-        } else {
-            $use_custom   = true;
-            $custom_value = $default_value ?: '';
-        }
-    }
+	    // Build proper input names for the select box and the custom text field.
+	    // WordPress settings API expects `option_name[field_name]` style names.
+	    $select_name = \BFR_CORE_OPTION . '[' . esc_attr($opt_key) . '_select]';
+	    $input_name  = \BFR_CORE_OPTION . '[' . esc_attr($opt_key) . ']';
 
-    $select_name = \BFR_CORE_OPTION . '[' . esc_attr($opt_key) . '_select]';
-    $input_name  = \BFR_CORE_OPTION . '[' . esc_attr($opt_key) . ']';
+	    // Start capturing HTML output into a buffer instead of printing directly.
+	    ob_start(); ?>
+	    <!-- Dropdown select for meta keys -->
+	    <select name="<?php echo esc_attr($select_name); ?>" data-bfr-target="<?php echo esc_attr($opt_key); ?>">
+	        <!-- Default "empty" option -->
+	        <option value="" <?php selected( $use_custom ? '' : $current, '' ); ?>>— Select meta key —</option>
+	        <!-- Loop over discovered keys and add them as <option> entries -->
+	        <?php foreach ($list as $key): ?>
+	            <option value="<?php echo esc_attr($key); ?>" <?php selected( $use_custom ? '' : $current, $key ); ?>>
+	                <?php echo esc_html($key); ?>
+	            </option>
+	        <?php endforeach; ?>
+	        <!-- Always include a "Custom…" option to allow typing a new key -->
+	        <option value="__custom__" <?php selected( $use_custom ? '__custom__' : '', '__custom__' ); ?>>Custom…</option>
+	    </select>
 
-    ob_start(); ?>
-    <select name="<?php echo esc_attr($select_name); ?>" data-bfr-target="<?php echo esc_attr($opt_key); ?>">
-        <?php foreach ($list as $key): ?>
-            <option value="<?php echo esc_attr($key); ?>" <?php selected($select_value, $key); ?>>
-                <?php echo esc_html($key); ?>
-            </option>
-        <?php endforeach; ?>
-        <option value="__custom__" <?php selected($use_custom ? '__custom__' : '', '__custom__'); ?>>Custom…</option>
-    </select>
-    <input type="text"
-        class="regular-text bfr-meta-custom <?php echo $use_custom ? '' : 'hidden'; ?>"
-        data-bfr-for="<?php echo esc_attr($opt_key); ?>"
-        name="<?php echo esc_attr($input_name); ?>"
-        value="<?php echo esc_attr($custom_value); ?>"
-        aria-label="<?php echo esc_attr($label); ?>"
-        placeholder="<?php echo esc_attr('Type meta key'); ?>" />
+	    <!-- Text input for custom key, only visible when "Custom…" is chosen -->
+	    <input type="text"
+	        class="regular-text bfr-meta-custom <?php echo $use_custom ? '' : 'hidden'; ?>"
+	        data-bfr-for="<?php echo esc_attr($opt_key); ?>"
+	        name="<?php echo esc_attr($input_name); ?>"
+	        value="<?php echo esc_attr($current); ?>"
+	        aria-label="<?php echo esc_attr($label); ?>"
+	        placeholder="<?php echo esc_attr('Type meta key (when using “Custom…” )'); ?>" />
+	    <?php
+	    // Store the captured HTML into $html and end buffering.
+	    $html = ob_get_clean();
 
-    <?php
-    $html = ob_get_clean();
+	    // Ensure the CSS + JS for toggling the "Custom…" textbox is only printed once per page.
+	    static $printed = false;
+	    if (!$printed) {
+	        $printed = true;
+	        // Inline CSS to hide inputs with class "hidden"
+	        $html .= '<style>.hidden{display:none}</style>';
+	        // Inline JS: toggles the custom text field when the dropdown changes.
+	        $html .= '<script>
+	        document.addEventListener("change", function(ev){
+	            var sel = ev.target; // what was changed
+	            // Only react if the changed element is one of our select fields
+	            if (!sel.matches(\'select[name^="' . \BFR_CORE_OPTION . '"][name$="_select]"]\')) return;
+	            // Find the matching custom input field
+	            var key = sel.getAttribute("data-bfr-target");
+	            var input = document.querySelector(\'input.bfr-meta-custom[data-bfr-for="\'+key+\'"]\');
+	            if (!input) return;
+	            // If "Custom…" is selected, show the text field
+	            if (sel.value === "__custom__") {
+	                input.classList.remove("hidden");
+	                input.removeAttribute("hidden");
+	                input.focus();
+	            } else {
+	                // Otherwise, hide the text field and sync its value with the select
+	                input.value = sel.value || "";
+	                input.classList.add("hidden");
+	                input.setAttribute("hidden","hidden");
+	            }
+	        });
+	        </script>';
+	    }
 
-    static $printed = false;
-    if (!$printed) {
-        $printed = true;
-        $html .= '<style>.hidden{display:none}</style>';
-        $html .= '<script>
-        document.addEventListener("change", function(ev){
-            var sel = ev.target;
-            if (!sel.matches(\'select[name^="' . \BFR_CORE_OPTION . '"][name$="_select]"]\')) return;
-            var key = sel.getAttribute("data-bfr-target");
-            var input = document.querySelector(\'input.bfr-meta-custom[data-bfr-for="\'+key+\'"]\');
-            if (!input) return;
-            if (sel.value === "__custom__") {
-                input.classList.remove("hidden");
-                input.removeAttribute("hidden");
-                input.focus();
-            } else {
-                input.value = sel.value || "";
-                input.classList.add("hidden");
-                input.setAttribute("hidden","hidden");
-            }
-        });
-        </script>';
-    }
-    return $html;
-}
+	    // Return the generated HTML string
+	    return $html;
+	}
 
 	public static function get_relation_choices(): array {
 		$choices = [];
@@ -345,5 +347,31 @@ public static function meta_key_picker_html(
 		} catch (\Throwable $e) {}
 
 		return $keys;
+	}
+
+	public static function get_user_visible_jetengine_meta_keys_for_cpt(string $cpt): array {
+	    // Keys JetEngine has defined for this CPT (could be from CPT config or JE Meta Boxes)
+	    $je_keys = array_keys(self::get_jetengine_meta_keys_for_cpt($cpt));
+
+	    // Filter out anything we don’t want to show in the dropdown
+	    //  - internal/system-ish keys that start with "_" (Elementor, WP, etc)
+	    //  - our own aggregate keys "bfr_*"
+	    $out = [];
+	    foreach ($je_keys as $k) {
+	        $k = (string) $k;
+	        if ($k === '') continue;
+	        if (strpos($k, '_') === 0) continue;       // hide system/private-looking keys
+	        if (strpos($k, 'bfr_') === 0) continue;     // hide our aggregator keys
+	        $out[$k] = $k;
+	    }
+
+	    if (!empty($out)) {
+	        natcasesort($out);
+	        return array_values($out);
+	    }
+
+	    // Fallback: if JetEngine didn’t return anything, keep the list truly empty.
+	    // (We do NOT pull from the DB, to avoid showing bfr_* or other noise.)
+	    return [];
 	}
 }
