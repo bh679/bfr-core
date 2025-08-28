@@ -46,40 +46,74 @@ final class Helpers {
 	}
 
 	public static function get_meta_key_choices_for_cpt(string $cpt, int $limit = 300): array {
-		global $wpdb;
+	    // Make $wpdb (the WordPress database object) available inside this function
+	    global $wpdb;
 
-		$cache_key = 'bfr_meta_keys_' . sanitize_key($cpt);
-		$cached    = get_transient($cache_key);
-		if (is_array($cached)) return $cached;
+	    // Build a unique cache key name based on the CPT slug
+	    // e.g. if $cpt = "destinations", key becomes "bfr_meta_keys_destinations"
+	    $cache_key = 'bfr_meta_keys_' . sanitize_key($cpt);
 
-		$sql = $wpdb->prepare(
-			"SELECT DISTINCT pm.meta_key
-			 FROM {$wpdb->postmeta} pm
-			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-			 WHERE p.post_type = %s
-			   AND pm.meta_key <> ''
-			 LIMIT %d",
-			$cpt, $limit
-		);
-		$rows = $wpdb->get_col($sql); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	    // Try to load any previously cached results for this CPT
+	    $cached = get_transient($cache_key);
 
-		$keys = [];
-		if (is_array($rows)) {
-			$skip_prefixes = ['_edit_','_thumbnail_id','_elementor','_wp_','_aioseo_','_yoast_','_et_','_oembed_','_jet_'];
-			foreach ($rows as $k) {
-				$k = (string) $k;
-				$skip = false;
-				foreach ($skip_prefixes as $pref) {
-					if (substr($k, 0, strlen($pref)) === $pref) { $skip = true; break; }
-				}
-				if (!$skip) $keys[$k] = $k;
-			}
-		}
+	    // If we already cached a list (and it’s an array), return it immediately
+	    if (is_array($cached)) return $cached;
 
-		natcasesort($keys);
-		$keys = array_unique(array_values($keys));
-		set_transient($cache_key, $keys, 10 * MINUTE_IN_SECONDS);
-		return $keys;
+	    // Otherwise: query the database directly to discover meta keys
+	    // Prepare a SQL query that selects distinct meta_key values
+	    // from wp_postmeta joined with wp_posts, only for this CPT.
+	    // Skip empty meta_key rows, and limit the number of rows for safety.
+	    $sql = $wpdb->prepare(
+	        "SELECT DISTINCT pm.meta_key
+	         FROM {$wpdb->postmeta} pm
+	         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+	         WHERE p.post_type = %s
+	           AND pm.meta_key <> ''
+	         LIMIT %d",
+	        $cpt, $limit
+	    );
+
+	    // Execute the query and get back a flat list of meta_key strings
+	    $rows = $wpdb->get_col($sql); // returns an array of strings
+
+	    // Initialize an empty array of usable keys
+	    $keys = [];
+
+	    // If the query returned rows, process them
+	    if (is_array($rows)) {
+	        // Define prefixes we want to ignore (internal WP/Elementor/SEO junk keys)
+	        $skip_prefixes = ['_edit_','_thumbnail_id','_elementor','_wp_','_aioseo_','_yoast_','_et_','_oembed_','_jet_'];
+
+	        // Loop through each meta key
+	        foreach ($rows as $k) {
+	            $k = (string) $k;   // make sure it’s a string
+	            $skip = false;      // assume we keep it
+
+	            // Check if the meta key starts with any of the excluded prefixes
+	            foreach ($skip_prefixes as $pref) {
+	                if (substr($k, 0, strlen($pref)) === $pref) {
+	                    $skip = true; // mark to skip this key
+	                    break;        // no need to check further
+	                }
+	            }
+
+	            // If it’s not a skip key, keep it in the array
+	            if (!$skip) $keys[$k] = $k;
+	        }
+	    }
+
+	    // Sort the list alphabetically (case-insensitive, natural order)
+	    natcasesort($keys);
+
+	    // Convert to a simple list of unique values (remove duplicates, reindex)
+	    $keys = array_unique(array_values($keys));
+
+	    // Save the cleaned list into a transient cache for 10 minutes
+	    // This means next call won’t need to hit the DB.
+	    set_transient($cache_key, $keys, 10 * MINUTE_IN_SECONDS);
+
+	    // Return the list of meta keys
+	    return $keys;
 	}
 
 
