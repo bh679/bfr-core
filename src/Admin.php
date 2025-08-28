@@ -291,7 +291,6 @@ final class Admin {
 			echo '<script>history.replaceState(null, "", ' . wp_json_encode(esc_url_raw($clean_url)) . ');</script>';
 		}
 
-
 		$dest_cpt = $opts['dest_cpt'] ?? 'destinations';
 
 		$keys = [
@@ -308,6 +307,15 @@ final class Admin {
 			: [];
 
 		$je_defined = Helpers::get_jetengine_meta_keys_for_cpt($dest_cpt);
+
+
+		$refresh_url = add_query_arg(
+		    [
+		        'bfr_refresh_keys' => '1',
+		        '_wpnonce'         => wp_create_nonce('bfr_refresh_keys'),
+		    ]
+		);
+
 		?>
 		<div class="wrap">
 			<h1 style="display:flex;align-items:center;gap:.5rem">
@@ -316,6 +324,8 @@ final class Admin {
 					Refresh meta keys
 				</a>
 			</h1>
+
+			<?php settings_errors('bfr-core'); ?>
 
 			<form method="post" action="options.php">
 				<?php settings_fields('bfr_core_group'); ?>
