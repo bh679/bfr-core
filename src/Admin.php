@@ -258,13 +258,49 @@ final class Admin {
 		$agg  = Aggregator::instance();
 		$opts = wp_parse_args(get_option(\BFR_CORE_OPTION, []), $agg->defaults());
 
-		// Optional: manual refresh of meta-key cache for the selected CPTs
-		if (isset($_GET['bfr_refresh_keys'])) {
-			$dest   = $opts['dest_cpt']   ?? 'destinations';
-			$school = $opts['school_cpt'] ?? 'freedive-school';
-			delete_transient('bfr_meta_keys_' . sanitize_key($dest));
-			delete_transient('bfr_meta_keys_' . sanitize_key($school));
+		// Handle "Refresh meta keys" action (clears cached meta-key lists)
+		if (isset($_GET['bfr_refresh_keys']) && isset($_GET['_wpnonce'])
+		    && wp_verify_nonce($_GET['_wpnonce'], 'bfr_refresh_keys')) {
+
+			$dest   = is_string($opts['dest_cpt'] ?? '')   ? $opts['dest_cpt']   : 'destinations';
+			$school = is_string($opts['school_cpt'] ?? '') ? $opts['school_cpt'] : 'freedive-school';
+
+			$dk1 = 'bfr_meta_keys_' . sanitize_key($dest);
+			$dk2 = 'bfr_meta_keys_' . sanitize_key($school);
+
+			// Clear transients (single + multisite just in case)
+			delete_transient($dk1);
+			delete_transient($dk2);
+			delete_site_transient($dk1);
+			delete_site_transient($dk2);
+
+			/**
+			 * Optional: let advanced setups flush a wider cache layer (e.g. object cache).
+			 * Return true from this filter to run wp_cache_flush(); default is false.
+			 */
+			if (apply_filters('bfr_core_flush_object_cache_on_refresh', false)) {
+				if (function_exists('wp_cache_flush')) {
+					wp_cache_flush();
+				}
+			}
+
+			// Show admin notice
+			add_settings_error(
+				'bfr-core',
+				'bfr_core_meta_keys_refreshed',
+				sprintf(
+					'Meta key caches cleared for CPTs: %s and %s.',
+					esc_html($dest),
+					esc_html($school)
+				),
+				'updated'
+			);
+
+			// Clean URL (remove action + nonce)
+			$clean_url = remove_query_arg(['bfr_refresh_keys', '_wpnonce']);
+			echo '<script>history.replaceState(null, "", ' . wp_json_encode(esc_url_raw($clean_url)) . ');</script>';
 		}
+
 
 		$dest_cpt = $opts['dest_cpt'] ?? 'destinations';
 
@@ -286,8 +322,7 @@ final class Admin {
 		<div class="wrap">
 			<h1 style="display:flex;align-items:center;gap:.5rem">
 				BFR Core
-				<a class="button button-secondary button-small"
-				   href="<?php echo esc_url(add_query_arg('bfr_refresh_keys', '1')); ?>">
+				<a class="button button-secondary button-small" href="<?php echo esc_url($refresh_url); ?>">
 					Refresh meta keys
 				</a>
 			</h1>

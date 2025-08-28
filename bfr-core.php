@@ -15,7 +15,7 @@
  * Keep this file tiny: no business logic here.
  *
  * @package   BFR\Core
- * @since     0.6.2
+ * @since     0.6.3
  */
 /**
  * Plugin Name:       BFR Core
