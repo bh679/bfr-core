@@ -116,6 +116,10 @@ final class Helpers {
 	    return $keys;
 	}
 
+	/*This function renders a dropdown + optional text field to pick a meta key.
+	•	The dropdown is populated with either all DB keys or only JetEngine-declared keys.
+	•	If the saved value isn’t in the list, it shows the text box instead (“Custom…”).
+	•	A little JS listens for dropdown changes to toggle that textbox dynamically.*/
 
 	public static function meta_key_picker_html(
 	    string $opt_key,                  // The option key name (e.g., 'dest_meta_school_count')
