@@ -6,31 +6,33 @@ namespace BFR\Admin;
 use BFR\Infrastructure\WordPress\OptionRepository;
 
 /**
- * Calculator configuration editor.
+ * Class CalculatedMetaEditor
  *
- * Responsibilities:
- * - Renders an admin page under "BFR → Calculator Editor".
- * - Lets admins edit calculator configs and saves overrides in WP options.
- * - Provides reusable UI helpers:
- *     1) render_select_with_custom()  → select with "Custom…" option that toggles a free-text input.
- *     2) render_cpt_selector()        → post type (CPT) selector built on (1).
- *     3) render_meta_key_selector()   → meta key selector for a given CPT built on (1).
+ * Admin UI to configure calculated meta "calculators".
+ * - Adds helpers to render a select with "Custom…" option (reveals a text input).
+ * - Provides CPT selectors (input CPT and target CPT) built on top of that helper.
+ * - Provides meta key selectors for a chosen CPT, with multi-row support for "input keys".
+ * - Renders a single form to update ALL calculators at once.
  *
- * Security:
- * - Capability: manage_options
- * - CSRF: nonce "bfr-calc-edit"
+ * SECURITY:
+ * - Capability check (manage_options) for both viewing and saving.
+ * - Nonce check on save.
+ *
+ * SAVING MODEL:
+ * - Global CPT choices are saved to every calculator override.
+ * - Per-calculator row saves: name, target_meta_key, input_meta_keys[].
  */
 final class CalculatedMetaEditor
 {
-    /** @var array<string, array<string,mixed>> Registry of calculators keyed by slug */
+    /** @var array<string, array<string,mixed>> Registry of active calculators, keyed by slug. */
     private array $registry;
 
-    /** Option storage/retrieval */
+    /** Storage for overrides in the wp_options table. */
     private OptionRepository $options;
 
     /**
-     * @param array<string, array<string,mixed>> $registry Active calculator registry (defaults overlaid by saved options)
-     * @param OptionRepository                   $options  Options repo (reads/writes overrides)
+     * @param array<string, array<string,mixed>> $registry Active calculator definitions.
+     * @param OptionRepository                   $options  Options repo to persist overrides.
      */
     public function __construct(array $registry, OptionRepository $options)
     {
@@ -39,407 +41,163 @@ final class CalculatedMetaEditor
     }
 
     /**
-     * Register admin menu and form handlers.
+     * Register admin hooks for menu and saving.
      */
     public function register(): void
     {
-        add_action('admin_post_bfr_save_calc', [$this, 'handle_save']);
-        add_action('admin_menu', [$this, 'add_menu']);
+        add_action('admin_post_bfr_save_calc', [$this, 'handle_save']); // Form submission handler
+        add_action('admin_menu',               [$this, 'add_menu']);    // Menu item
     }
 
     /**
-     * Add "Calculator Editor" submenu under the BFR root menu.
+     * Add the "Calculator Editor" submenu under the main BFR menu.
      */
     public function add_menu(): void
     {
         add_submenu_page(
-            'bfr-root',
-            'Calculator Editor',
-            'Calculator Editor',
-            'manage_options',
-            'bfr-calc-editor',
-            [$this, 'render_editor']
+            'bfr-root',              // parent slug (created by AdminPanel)
+            'Calculator Editor',     // page title
+            'Calculator Editor',     // menu title
+            'manage_options',        // capability
+            'bfr-calc-editor',       // menu slug
+            [$this, 'render_editor'] // render callback
         );
     }
 
     /**
-     * Render the editor UI for all calculators.
+     * =========================
+     * Function 1 (Helper)
+     * =========================
      *
-     * Uses the new helper renderers to:
-     * - Pick the Target CPT via a dropdown (with Custom).
-     * - Pick the Target Meta Key via a dropdown of discovered meta keys (with Custom).
-     * - Provide "helpers" to add Input CPTs and Input Meta Keys to their CSV fields.
-     */
-    public function render_editor(): void
-    {
-        if (! current_user_can('manage_options')) {
-            wp_die(__('Insufficient permissions.', 'bfr'));
-        }
-
-        $nonce  = wp_create_nonce('bfr-calc-edit');
-        $action = admin_url('admin-post.php');
-
-        echo '<div class="wrap"><h1>Calculator Editor</h1>';
-        echo '<p>Edit calculator configs. Changes are stored in the options table and override defaults.</p>';
-
-        // Render each calculator as a section with its own form
-        foreach ($this->registry as $slug => $cfg) {
-            echo '<hr/>';
-            echo '<h2>' . esc_html($cfg['name'] ?? $slug) . ' <small><code>' . esc_html($slug) . '</code></small></h2>';
-
-            // Current settings (fallbacks)
-            $target = (string)($cfg['target_cpt_id']   ?? '');
-            $tmeta  = (string)($cfg['target_meta_key'] ?? '');
-            $inputs = (array) ($cfg['input_cpt_id']    ?? []);
-            $imeta  = (array) ($cfg['input_meta_keys'] ?? []);
-            $rel    = (string)($cfg['relation_meta_key'] ?? '');
-
-            echo '<form method="post" action="' . esc_url($action) . '">';
-            echo '<input type="hidden" name="action" value="bfr_save_calc" />';
-            echo '<input type="hidden" name="_wpnonce" value="' . esc_attr($nonce) . '" />';
-            echo '<input type="hidden" name="slug" value="' . esc_attr($slug) . '" />';
-
-            echo '<table class="form-table"><tbody>';
-
-            // === Target CPT (post type) using Function 2 (built on Function 1) ===
-            echo '<tr><th scope="row">Target CPT (post type slug)</th><td>';
-            $this->render_cpt_selector(
-                field_base: 'target_cpt_id',
-                current_value: $target,
-                label: 'Select Target Post Type',
-                description: 'Choose an existing post type or select "Custom…" to enter a custom slug.'
-            );
-            echo '</td></tr>';
-
-            // === Target Meta Key using Function 3 (built on Function 1) ===
-            echo '<tr><th scope="row">Target Meta Key</th><td>';
-            $this->render_meta_key_selector(
-                field_base: 'target_meta_key',
-                post_type: $target,
-                current_value: $tmeta,
-                label: 'Select Target Meta Key',
-                description: 'Suggested keys are discovered from posts of the selected Target CPT. Or choose "Custom…" to type any key.'
-            );
-            echo '</td></tr>';
-
-            // === Input CPT(s): keep CSV field for multiple CPTs; add a helper selector to append ===
-            echo '<tr><th scope="row">Input CPT(s)</th><td>';
-            echo '<input type="text" name="input_cpt_id" value="' . esc_attr(implode(',', $inputs)) . '" class="regular-text" />';
-            echo '<p class="description">Comma-separated list of input post type slugs.</p>';
-
-            echo '<div style="margin-top:.5rem">';
-            $this->render_cpt_selector(
-                field_base: 'input_cpt_id_helper',
-                current_value: '',
-                label: 'Add an Input CPT',
-                description: 'Use this helper to append a CPT to the comma-separated field above.'
-            );
-            echo '<button type="button" class="button" data-bfr-append="#bfr-input-cpt-' . esc_attr($slug) . '">Add</button>';
-            echo '</div>';
-
-            // tie the text input to a unique id for the helper button
-            echo '<script>document.addEventListener("DOMContentLoaded",function(){';
-            echo 'var f=document.currentScript.closest("tr").querySelector(\'input[name="input_cpt_id"]\');';
-            echo 'if(f&&!f.id){f.id="bfr-input-cpt-' . esc_js($slug) . '";}';
-            echo '});</script>';
-            echo '</td></tr>';
-
-            // === Input Meta Keys: keep CSV with helper to append discovered key ===
-            // Heuristic: for discovery, prefer first input CPT; fallback to target CPT if inputs empty.
-            $discovery_cpt = $inputs[0] ?? $target;
-            echo '<tr><th scope="row">Input Meta Keys</th><td>';
-            echo '<input type="text" name="input_meta_keys" value="' . esc_attr(implode(',', $imeta)) . '" class="regular-text" />';
-            echo '<p class="description">Comma-separated list of meta keys read from input posts.</p>';
-
-            echo '<div style="margin-top:.5rem">';
-            $this->render_meta_key_selector(
-                field_base: 'input_meta_keys_helper',
-                post_type: (string)$discovery_cpt,
-                current_value: '',
-                label: 'Add an Input Meta Key',
-                description: 'Select a discovered key (from the first input CPT if available), or add a Custom key, then click "Add".'
-            );
-            echo '<button type="button" class="button" data-bfr-append="#bfr-input-meta-' . esc_attr($slug) . '">Add</button>';
-            echo '</div>';
-
-            // tie the text input to a unique id for the helper button
-            echo '<script>document.addEventListener("DOMContentLoaded",function(){';
-            echo 'var f=document.currentScript.closest("tr").querySelector(\'input[name="input_meta_keys"]\');';
-            echo 'if(f&&!f.id){f.id="bfr-input-meta-' . esc_js($slug) . '";}';
-            echo '});</script>';
-            echo '</td></tr>';
-
-            // === Relation Meta Key (plain text or use the meta key selector against input/target if you prefer) ===
-            echo '<tr><th scope="row">Relation Meta Key</th><td>';
-            echo '<input type="text" name="relation_meta_key" value="' . esc_attr($rel) . '" class="regular-text" />';
-            echo '<p class="description">Meta key on input posts that stores the related Target post ID.</p>';
-            echo '</td></tr>';
-
-            echo '</tbody></table>';
-
-            echo '<p><button class="button button-primary">Save</button></p>';
-            echo '</form>';
-        }
-
-        // One-time inline script to support "Custom…" toggle and helper "Add" buttons
-        $this->print_inline_editor_script();
-
-        echo '</div>';
-    }
-
-    /**
-     * Handle POST submission to save calculator overrides to options.
+     * Render a <select> from provided options, with an extra "Custom…" entry.
+     * When "Custom…" is selected, display an adjacent text input.
+     * - This function ONLY renders the fields, not labels or descriptions.
      *
-     * Accepts values from:
-     * - target_cpt_id_select / target_cpt_id_custom  (select-with-custom)
-     * - target_meta_key_select / target_meta_key_custom
-     * - input_cpt_id  (CSV)
-     * - input_meta_keys (CSV)
-     * - relation_meta_key (text)
-     */
-    public function handle_save(): void
-    {
-        if (! current_user_can('manage_options')) {
-            wp_die(__('Insufficient permissions.', 'bfr'));
-        }
-        check_admin_referer('bfr-calc-edit');
-
-        $slug = sanitize_key($_POST['slug'] ?? '');
-        if (! $slug) {
-            wp_safe_redirect(add_query_arg(['page' => 'bfr-calc-editor', 'bfr_msg' => 'invalid'], admin_url('admin.php')));
-            exit;
-        }
-
-        // Resolve select-with-custom for Target CPT
-        $target = $this->resolve_select_with_custom('target_cpt_id');
-
-        // Resolve select-with-custom for Target Meta Key
-        $tmeta = $this->resolve_select_with_custom('target_meta_key', is_meta_key: true);
-
-        // CSV input CPTs
-        $inputs_raw = sanitize_text_field($_POST['input_cpt_id'] ?? '');
-        $inputs = array_values(array_filter(array_map('trim', explode(',', $inputs_raw))));
-
-        // CSV input meta keys
-        $input_meta_raw = sanitize_text_field($_POST['input_meta_keys'] ?? '');
-        $input_metas = array_values(array_filter(array_map('trim', explode(',', $input_meta_raw))));
-
-        // Relation meta key
-        $rel = sanitize_key($_POST['relation_meta_key'] ?? '');
-
-        $overrides = $this->options->get_registry_overrides();
-        if (! is_array($overrides)) {
-            $overrides = [];
-        }
-
-        // Shallow merge override for this calculator
-        $overrides[$slug] = array_merge($overrides[$slug] ?? [], [
-            'target_cpt_id'     => $target,
-            'target_meta_key'   => $tmeta,
-            'input_cpt_id'      => $inputs,
-            'input_meta_keys'   => $input_metas,
-            'relation_meta_key' => $rel,
-        ]);
-
-        $this->options->save_registry_overrides($overrides);
-
-        wp_safe_redirect(add_query_arg(['page' => 'bfr-calc-editor', 'bfr_msg' => 'saved'], admin_url('admin.php')));
-        exit;
-    }
-
-    // ---------------------------------------------------------------------
-    // Function 1: Generic "select with custom" renderer
-    // ---------------------------------------------------------------------
-
-    /**
-     * Render a labeled select field populated with $options and a "Custom…" option that reveals a text input.
+     * @param string               $name          HTML name attribute for the select (and the custom input will use "{$name}_custom").
+     * @param array<string,string> $options       Key/value pairs of value => label to show in the dropdown.
+     * @param string               $selected      Selected option value. If '__custom__', the text input is shown.
+     * @param string               $custom_value  Text input value to prefill when in custom mode.
+     * @param string|null          $id            Optional explicit id (auto-generated if omitted).
      *
-     * Structure:
-     *   - <label>...</label>
-     *   - <select name="{$field_base}_select" data-role="with-custom">...</select>
-     *   - <input type="text" name="{$field_base}_custom" ...>  (auto-toggled)
-     *
-     * On submit, call resolve_select_with_custom($field_base) to retrieve the chosen value.
-     *
-     * @param string   $field_base         Base name for the field (e.g., 'target_cpt_id')
-     * @param string[] $options            Map of option => label (or a flat list; values will be used for both when numeric keys)
-     * @param string   $current_value      The currently saved value (determines which control is pre-selected)
-     * @param string   $label              Human-readable label rendered above the control
-     * @param string   $description        Optional helper text rendered below the control
-     * @param string   $custom_placeholder Placeholder used when the "Custom…" input appears
+     * @return string HTML markup (select + optional text input).
      */
     private function render_select_with_custom(
-        string $field_base,
+        string $name,
         array $options,
-        string $current_value,
-        string $label,
-        string $description = '',
-        string $custom_placeholder = 'Custom value…'
-    ): void {
-        // Normalize options to value => label map
-        $normalized = [];
-        foreach ($options as $k => $v) {
-            if (is_int($k)) {
-                $normalized[(string)$v] = (string)$v;
-            } else {
-                $normalized[(string)$k] = (string)$v;
-            }
+        string $selected = '',
+        string $custom_value = '',
+        ?string $id = null
+    ): string {
+        // Ensure stable, unique id for this field (used by JS toggler)
+        $id = $id ?: 'fld_' . md5($name . wp_rand());
+
+        // Inject a synthetic option to represent "Custom…" mode.
+        $options_with_custom = $options + ['__custom__' => 'Custom…'];
+
+        // Build options HTML
+        $opts_html = '';
+        foreach ($options_with_custom as $value => $label) {
+            $sel = selected($selected, (string)$value, false);
+            $opts_html .= sprintf(
+                '<option value="%s" %s>%s</option>',
+                esc_attr((string)$value),
+                $sel,
+                esc_html((string)$label)
+            );
         }
 
-        // If current value is not among options, pre-select "Custom…" and populate the custom input
-        $is_custom = ($current_value !== '' && ! array_key_exists($current_value, $normalized));
+        // Decide initial visibility for the custom input
+        $custom_style = ($selected === '__custom__') ? '' : 'style="display:none"';
 
-        $select_name = $field_base . '_select';
-        $custom_name = $field_base . '_custom';
-        $select_id   = $field_base . '_select_' . wp_generate_password(6, false);
-        $custom_id   = $field_base . '_custom_' . wp_generate_password(6, false);
+        // Text input name will be "{$name}_custom"
+        $custom_name  = $name . '_custom';
 
-        echo '<div class="bfr-select-with-custom">';
-        echo '<label for="' . esc_attr($select_id) . '"><strong>' . esc_html($label) . '</strong></label><br/>';
-
-        echo '<select id="' . esc_attr($select_id) . '" name="' . esc_attr($select_name) . '" data-role="with-custom" data-custom="#' . esc_attr($custom_id) . '">';
-        // Default blank
-        echo '<option value="">— Select —</option>';
-
-        // Render provided options
-        foreach ($normalized as $value => $text) {
-            $selected = (!$is_custom && $current_value !== '' && $current_value === $value) ? ' selected' : '';
-            echo '<option value="' . esc_attr($value) . '"' . $selected . '>' . esc_html($text) . '</option>';
-        }
-
-        // Custom option
-        $custom_selected = $is_custom ? ' selected' : '';
-        echo '<option value="__custom__"' . $custom_selected . '>Custom…</option>';
-        echo '</select> ';
-
-        // Custom text input (toggled via JS)
-        $custom_style = $is_custom ? '' : 'style="display:none"';
-        $custom_val   = $is_custom ? $current_value : '';
-        echo '<input type="text" id="' . esc_attr($custom_id) . '" name="' . esc_attr($custom_name) . '" value="' . esc_attr($custom_val) . '" class="regular-text" ' . $custom_style . ' placeholder="' . esc_attr($custom_placeholder) . '"/>';
-
-        if ($description !== '') {
-            echo '<p class="description" style="margin-top:.25rem">' . esc_html($description) . '</p>';
-        }
-
-        echo '</div>';
-    }
-
-    /**
-     * Resolve the posted value from a select-with-custom control created by render_select_with_custom().
-     *
-     * @param string $field_base  Base name (e.g., 'target_cpt_id')
-     * @param bool   $is_meta_key If true, sanitize as a meta key (sanitize_key); else use sanitize_text_field
-     * @return string             Final selected value (custom or from the select)
-     */
-    private function resolve_select_with_custom(string $field_base, bool $is_meta_key = false): string
-    {
-        $select_name = $field_base . '_select';
-        $custom_name = $field_base . '_custom';
-
-        $selected = sanitize_text_field($_POST[$select_name] ?? '');
-        if ($selected === '__custom__') {
-            $custom = $is_meta_key
-                ? sanitize_key($_POST[$custom_name] ?? '')
-                : sanitize_text_field($_POST[$custom_name] ?? '');
-            return $custom;
-        }
-
-        // Sanitize selected value
-        return $is_meta_key ? sanitize_key($selected) : sanitize_text_field($selected);
-    }
-
-    // ---------------------------------------------------------------------
-    // Function 2: CPT selector built on select-with-custom
-    // ---------------------------------------------------------------------
-
-    /**
-     * Render a CPT selector using render_select_with_custom().
-     *
-     * It lists public post types (including custom types), e.g., 'post', 'page', 'freedive-school', etc.
-     * Adds a "Custom…" option for arbitrary slugs.
-     *
-     * @param string $field_base     Base input name (e.g., 'target_cpt_id')
-     * @param string $current_value  The currently selected CPT slug
-     * @param string $label          Label shown above the field
-     * @param string $description    Optional help text rendered below
-     */
-    private function render_cpt_selector(
-        string $field_base,
-        string $current_value,
-        string $label,
-        string $description = ''
-    ): void {
-        $post_types = get_post_types(['show_in_nav_menus' => true], 'names'); // tends to include public CPTs
-        if (empty($post_types)) {
-            $post_types = get_post_types(['public' => true], 'names'); // fallback
-        }
-
-        // Build value => label list (labels are more human friendly if needed in future)
-        $options = [];
-        foreach ($post_types as $slug) {
-            $options[$slug] = $slug;
-        }
-
-        $this->render_select_with_custom(
-            field_base: $field_base,
-            options: $options,
-            current_value: $current_value,
-            label: $label,
-            description: $description,
-            custom_placeholder: 'Enter custom post type slug…'
+        // Render select + custom text input wrapper
+        // The wrapper has data attributes for JS to toggle visibility
+        $html  = '<span class="bfr-select-with-custom" ';
+        $html .= 'data-select-id="'.esc_attr($id).'" ';
+        $html .= 'data-custom-target="'.esc_attr($custom_name).'">';
+        $html .= sprintf(
+            '<select id="%s" name="%s" class="regular-text">',
+            esc_attr($id),
+            esc_attr($name)
         );
+        $html .= $opts_html;
+        $html .= '</select> ';
+        $html .= sprintf(
+            '<input type="text" name="%s" value="%s" class="regular-text" %s/>',
+            esc_attr($custom_name),
+            esc_attr($custom_value),
+            $custom_style
+        );
+        $html .= '</span>';
+
+        return $html;
     }
 
-    // ---------------------------------------------------------------------
-    // Function 3: Meta key selector for a given CPT built on select-with-custom
-    // ---------------------------------------------------------------------
+    /**
+     * =========================
+     * Function 2 (Helper)
+     * =========================
+     *
+     * Build a dropdown (using Function 1) of available CPT post type slugs.
+     * - Public post types are listed by their labels.
+     *
+     * @param string $name           Field name attribute.
+     * @param string $selected       Selected post type slug, or '__custom__'.
+     * @param string $custom_value   Custom post type slug if using custom.
+     *
+     * @return string HTML for the dropdown + custom text input.
+     */
+    private function render_cpt_selector(string $name, string $selected = '', string $custom_value = ''): string
+    {
+        // Fetch public post types and map slug => label
+        $types = get_post_types(['public' => true], 'objects');
+        $options = [];
+        foreach ($types as $slug => $obj) {
+            $options[$slug] = $obj->labels->singular_name ?: $slug;
+        }
+
+        // Reuse select-with-custom helper
+        return $this->render_select_with_custom($name, $options, $selected, $custom_value);
+    }
 
     /**
-     * Render a meta key selector using render_select_with_custom(), pre-populated with discovered keys for $post_type.
+     * =========================
+     * Function 3 (Helper)
+     * =========================
      *
-     * Discovery is best-effort:
-     * - Queries distinct meta_key from wp_postmeta joined to posts of the given post type.
-     * - Limited to a reasonable cap to avoid heavy queries.
+     * Build a dropdown (using Function 1) of discovered meta keys for a given CPT.
+     * - Discovery is best-effort: it queries postmeta joined to posts by post_type.
+     * - If your site uses a custom relation/store, override this discovery as needed.
      *
-     * @param string $field_base     Base input name (e.g., 'target_meta_key')
-     * @param string $post_type      Post type slug used to discover meta keys (can be empty → results in an empty option list)
-     * @param string $current_value  The currently selected meta key
-     * @param string $label          Label shown above the field
-     * @param string $description    Optional help text rendered below
+     * @param string $name           Field name attribute.
+     * @param string $post_type      CPT slug to discover meta keys for.
+     * @param string $selected       Selected meta key, or '__custom__'.
+     * @param string $custom_value   Value for custom meta key input.
+     * @param int    $limit          Max meta keys to show (prevent huge lists).
+     *
+     * @return string HTML for the dropdown + custom text input.
      */
     private function render_meta_key_selector(
-        string $field_base,
+        string $name,
         string $post_type,
-        string $current_value,
-        string $label,
-        string $description = ''
-    ): void {
-        $keys = $this->discover_meta_keys_for_post_type($post_type, 200); // cap to 200 unique keys
-        $options = [];
-        foreach ($keys as $k) {
-            $options[$k] = $k;
-        }
-
-        $this->render_select_with_custom(
-            field_base: $field_base,
-            options: $options,
-            current_value: $current_value,
-            label: $label,
-            description: $description,
-            custom_placeholder: 'Enter custom meta key…'
-        );
+        string $selected = '',
+        string $custom_value = '',
+        int $limit = 200
+    ): string {
+        $options = $this->discover_meta_keys_for_post_type($post_type, $limit);
+        return $this->render_select_with_custom($name, $options, $selected, $custom_value);
     }
 
     /**
-     * Discover distinct meta keys attached to posts of a given post type.
+     * Discover distinct meta keys for posts belonging to a given post type.
+     * NOTE: This can be moderately expensive; capped by LIMIT and grouped by meta_key.
      *
-     * WARNING:
-     * - This can be moderately expensive on very large sites; we cap results by $limit.
-     * - Results are best-effort for admin convenience only.
+     * @param string $post_type CPT slug.
+     * @param int    $limit     Max meta keys to return.
      *
-     * @param string $post_type Post type slug to scan
-     * @param int    $limit     Max unique keys to return
-     * @return string[]         List of meta_key strings
+     * @return array<string,string> value=>label map (meta_key => meta_key).
      */
     private function discover_meta_keys_for_post_type(string $post_type, int $limit = 200): array
     {
@@ -450,84 +208,370 @@ final class CalculatedMetaEditor
             return [];
         }
 
-        // Query: distinct meta_key for posts of this post_type, ignoring protected WP internals when possible.
-        // Note: we allow leading underscores since your use-case often uses leading-underscore keys.
-        $sql = "
+        // Query distinct meta keys for posts with the given post_type
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+        $sql = $wpdb->prepare(
+            "
             SELECT DISTINCT pm.meta_key
             FROM {$wpdb->postmeta} pm
             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
             WHERE p.post_type = %s
-              AND pm.meta_key <> ''
+            AND pm.meta_key NOT LIKE '\_%'  -- hide internal keys by default
+            ORDER BY pm.meta_key ASC
             LIMIT %d
-        ";
+            ",
+            $post_type,
+            $limit
+        );
 
-        // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnquotedComplexPlaceholder
-        $prepared = $wpdb->prepare($sql, $post_type, $limit);
-        $rows = is_string($prepared) ? $wpdb->get_col($prepared) : [];
-
-        // Sort naturally for nicer UX
-        if (is_array($rows)) {
-            natcasesort($rows);
-            $rows = array_values(array_unique(array_map('strval', $rows)));
-        } else {
-            $rows = [];
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+        $keys = $wpdb->get_col($sql);
+        if (! is_array($keys)) {
+            return [];
         }
 
-        return $rows;
-        // If desired, add a transient cache here to avoid re-querying on every load.
+        $out = [];
+        foreach ($keys as $k) {
+            $k = (string)$k;
+            $out[$k] = $k;
+        }
+        return $out;
     }
 
     /**
-     * Print a small inline script (once) that:
-     * - Toggles "Custom" inputs when the select value is "__custom__".
-     * - Handles helper "Add" buttons to append values to CSV text fields without duplicates.
+     * Render a MULTI meta-key picker (for "input keys") using repeated calls to render_meta_key_selector().
+     * Includes "Add key" / "Remove" controls in-place via tiny inline JS.
+     *
+     * @param string   $base_name     Base name for field array (e.g., "input_meta_keys[slug]").
+     * @param string   $post_type     CPT whose meta keys should populate the dropdowns.
+     * @param string[] $selected_keys Preselected keys; can contain '__custom__' with companion custom values.
+     * @param string[] $custom_values Preselected custom values aligned to $selected_keys.
+     *
+     * @return string HTML block with one or more meta key selectors and controls.
      */
-    private function print_inline_editor_script(): void
-    {
-        static $printed = false;
-        if ($printed) {
-            return;
+    private function render_input_keys_multi(
+        string $base_name,
+        string $post_type,
+        array $selected_keys = [],
+        array $custom_values = []
+    ): string {
+        // Ensure at least one row exists
+        if (empty($selected_keys)) {
+            $selected_keys = [''];
         }
-        $printed = true;
 
-        echo '<script>
-document.addEventListener("DOMContentLoaded",function(){
-  // Toggle custom input visibility based on select value
-  document.querySelectorAll(\'select[data-role="with-custom"]\').forEach(function(sel){
-    var targetSel = sel;
-    var custom = document.querySelector(sel.getAttribute("data-custom"));
-    var toggle = function(){
-      if (!custom) return;
-      if (targetSel.value === "__custom__") { custom.style.display = ""; }
-      else { custom.style.display = "none"; }
-    };
-    sel.addEventListener("change", toggle);
-    toggle();
-  });
+        $html  = '<div class="bfr-metakeys-multi" data-post-type="'.esc_attr($post_type).'" data-base-name="'.esc_attr($base_name).'">';
+        $index = 0;
+        foreach ($selected_keys as $idx => $sel) {
+            $sel = (string)$sel;
+            $custom = (string)($custom_values[$idx] ?? '');
+            // Each row's name uses base_name[index]
+            $field_name = $base_name . '[' . $index . ']';
+            $custom_name = $field_name . '_custom'; // text input is auto-generated by the helper
 
-  // Helper buttons that append selected/custom value to a target CSV input
-  document.querySelectorAll(\'button[data-bfr-append]\').forEach(function(btn){
-    btn.addEventListener("click", function(){
-      var container = btn.closest("td") || document;
-      var sel = container.querySelector(\'select[data-role="with-custom"]\');
-      if (!sel) return;
-      var val = sel.value;
-      if (val === "__custom__") {
-        var custom = container.querySelector(sel.getAttribute("data-custom"));
-        val = custom ? custom.value.trim() : "";
-      }
-      if (!val) return;
+            $html .= '<div class="bfr-metakeys-row" style="margin-bottom:6px">';
+            $html .= $this->render_meta_key_selector($field_name, $post_type, $sel, $custom);
+            $html .= ' <button type="button" class="button bfr-remove-row" aria-label="Remove">–</button>';
+            $html .= '</div>';
+            $index++;
+        }
+        $html .= '<p><button type="button" class="button button-secondary bfr-add-row">Add key +</button></p>';
+        $html .= '</div>';
 
-      var targetInput = document.querySelector(btn.getAttribute("data-bfr-append"));
-      if (!targetInput) return;
+        return $html;
+    }
 
-      // Build unique CSV without duplicates
-      var parts = targetInput.value ? targetInput.value.split(",").map(function(s){return s.trim();}).filter(Boolean) : [];
-      if (parts.indexOf(val) === -1) { parts.push(val); }
-      targetInput.value = parts.join(",");
-    });
-  });
-});
-</script>';
+    /**
+     * Render the Calculator Editor page.
+     * - Asks for Input CPT (once) and Target CPT (once).
+     * - Displays a table with one row per calculator:
+     *     columns: Name, Target Meta Key, Input Meta Keys (multi)
+     * - Uses the helper functions for dropdowns with "Custom…" and meta key discovery.
+     */
+    public function render_editor(): void
+    {
+        if (! current_user_can('manage_options')) {
+            wp_die(__('Insufficient permissions.', 'bfr'));
+        }
+
+        // CSRF nonce and form action
+        $nonce  = wp_create_nonce('bfr-calc-edit');
+        $action = admin_url('admin-post.php');
+
+        // Derive sensible defaults for the global CPT selectors from the first calculator
+        $any = reset($this->registry) ?: [];
+        $default_target_cpt = (string)($any['target_cpt_id'] ?? '');
+        $default_input_cpt  = (string)((($any['input_cpt_id'] ?? []))[0] ?? '');
+
+        echo '<div class="wrap"><h1>Calculator Editor</h1>';
+        echo '<p>Edit all calculators in one place. Choose your global post types below, then set the target and input meta keys per calculator.</p>';
+
+        // Single form for ALL calculators
+        echo '<form method="post" action="'.esc_url($action).'">';
+        echo '<input type="hidden" name="action" value="bfr_save_calc" />';
+        echo '<input type="hidden" name="_wpnonce" value="'.esc_attr($nonce).'" />';
+
+        // ======= Global CPT selectors section =======
+        echo '<h2>Global Settings</h2>';
+        echo '<table class="form-table"><tbody>';
+
+        // Input CPT (once for all calculators)
+        echo '<tr><th scope="row">Input CPT (post type slug)</th><td>';
+        echo $this->render_cpt_selector(
+            'input_cpt_id_global',
+            $default_input_cpt === '' ? '' : $default_input_cpt,
+            '' // no custom prefill
+        );
+        echo '<p class="description">Used to discover available <strong>Input Meta Keys</strong> and saved to each calculator.</p>';
+        echo '</td></tr>';
+
+        // Target CPT (once for all calculators)
+        echo '<tr><th scope="row">Target CPT (post type slug)</th><td>';
+        echo $this->render_cpt_selector(
+            'target_cpt_id_global',
+            $default_target_cpt === '' ? '' : $default_target_cpt,
+            '' // no custom prefill
+        );
+        echo '<p class="description">Used to discover available <strong>Target Meta Keys</strong> and saved to each calculator.</p>';
+        echo '</td></tr>';
+
+        // Relation meta key (applies to all calculators)
+        $default_relation = (string)($any['relation_meta_key'] ?? '');
+        echo '<tr><th scope="row">Relation Meta Key (on input posts)</th><td>';
+        // Relation keys can vary widely → keep as plain input (allow custom only)
+        printf(
+            '<input type="text" name="relation_meta_key_global" value="%s" class="regular-text" />',
+            esc_attr($default_relation)
+        );
+        echo '<p class="description">Meta key on <em>input</em> posts that stores the <em>target</em> post ID (e.g., <code>_bfr_destination_id</code>).</p>';
+        echo '</td></tr>';
+
+        echo '</tbody></table>';
+
+        // ======= Table: one row per calculator =======
+        echo '<h2>Calculators</h2>';
+        echo '<table class="widefat fixed striped">';
+        echo '<thead><tr>';
+        echo '<th style="width:25%">Name</th>';
+        echo '<th style="width:35%">Target Meta Key</th>';
+        echo '<th style="width:40%">Input Meta Keys</th>';
+        echo '</tr></thead><tbody>';
+
+        foreach ($this->registry as $slug => $cfg) {
+            $name  = (string)($cfg['name'] ?? $slug);
+            $tmeta = (string)($cfg['target_meta_key'] ?? '');
+            $imeta = (array)($cfg['input_meta_keys'] ?? []);
+
+            // If the existing keys are JSON-encoded, normalize to strings
+            $imeta = array_map(static fn($v) => (string)$v, $imeta);
+
+            echo '<tr>';
+            // Column: Name
+            echo '<td>';
+            echo '<strong><code>'.esc_html($slug).'</code></strong><br />';
+            printf(
+                '<input type="text" name="name[%s]" value="%s" class="regular-text" />',
+                esc_attr($slug),
+                esc_attr($name)
+            );
+            echo '</td>';
+
+            // Column: Target Meta Key (single select-with-custom)
+            echo '<td>';
+            // Selector depends on TARGET CPT chosen above; we’ll resolve actual CPT on save.
+            // For discovery here, we use current default target CPT guess:
+            echo $this->render_meta_key_selector('target_meta_key['.$slug.']', $default_target_cpt, $tmeta, '');
+            echo '<p class="description">Select a known key or pick <em>Custom…</em> and type your own.</p>';
+            echo '</td>';
+
+            // Column: Input Meta Keys (multi)
+            echo '<td>';
+            echo $this->render_input_keys_multi('input_meta_keys['.$slug.']', $default_input_cpt, $imeta, []);
+            echo '<p class="description">Add as many input keys as needed. Each can be a known key or <em>Custom…</em>.</p>';
+            echo '</td>';
+
+            echo '</tr>';
+        }
+
+        echo '</tbody></table>';
+
+        echo '<p style="margin-top:1rem;"><button class="button button-primary">Save All</button></p>';
+        echo '</form>';
+
+        // ======= Minimal inline JS to handle "Custom…" toggle + multi-row add/remove =======
+        ?>
+        <script>
+        (function(){
+            // Toggle visibility of the adjacent text input when "Custom…" is selected
+            document.querySelectorAll('.bfr-select-with-custom select').forEach(function(sel){
+                sel.addEventListener('change', function(){
+                    var wrapper = sel.closest('.bfr-select-with-custom');
+                    if (!wrapper) return;
+                    var input = wrapper.querySelector('input[type="text"]');
+                    if (!input) return;
+                    input.style.display = (sel.value === '__custom__') ? '' : 'none';
+                });
+            });
+
+            // Add/remove rows for multi input meta keys
+            document.querySelectorAll('.bfr-metakeys-multi').forEach(function(block){
+                // Add
+                var addBtn = block.querySelector('.bfr-add-row');
+                if (addBtn) {
+                    addBtn.addEventListener('click', function(){
+                        var rows = block.querySelectorAll('.bfr-metakeys-row');
+                        var last = rows[rows.length - 1];
+                        if (!last) return;
+                        var clone = last.cloneNode(true);
+
+                        // Reset values in the clone
+                        var sel = clone.querySelector('select');
+                        if (sel) { sel.value = ''; }
+                        var text = clone.querySelector('input[type="text"]');
+                        if (text) { text.value = ''; text.style.display = 'none'; }
+
+                        block.insertBefore(clone, addBtn.parentNode);
+
+                        // Rebind custom toggler for the new select
+                        var newSel = clone.querySelector('select');
+                        if (newSel) {
+                            newSel.addEventListener('change', function(){
+                                var wrap = newSel.closest('.bfr-select-with-custom');
+                                var inp = wrap ? wrap.querySelector('input[type="text"]') : null;
+                                if (inp) { inp.style.display = (newSel.value === '__custom__') ? '' : 'none'; }
+                            });
+                        }
+
+                        // Rebind remove button
+                        var remBtn = clone.querySelector('.bfr-remove-row');
+                        if (remBtn) {
+                            remBtn.addEventListener('click', function(){
+                                var rows2 = block.querySelectorAll('.bfr-metakeys-row');
+                                if (rows2.length > 1) {
+                                    clone.remove();
+                                }
+                            });
+                        }
+                    });
+                }
+                // Remove (existing rows)
+                block.querySelectorAll('.bfr-remove-row').forEach(function(btn){
+                    btn.addEventListener('click', function(){
+                        var rows = block.querySelectorAll('.bfr-metakeys-row');
+                        var row = btn.closest('.bfr-metakeys-row');
+                        if (rows.length > 1 && row) {
+                            row.remove();
+                        }
+                    });
+                });
+            });
+        })();
+        </script>
+        <?php
+
+        echo '</div>'; // .wrap
+    }
+
+    /**
+     * Handle form submission.
+     * - Saves global input/target CPTs and relation key.
+     * - Saves each calculator row: name, target_meta_key (incl. custom), input_meta_keys[] (incl. custom entries).
+     * - Writes everything into options as overrides keyed by slug.
+     */
+    public function handle_save(): void
+    {
+        if (! current_user_can('manage_options')) {
+            wp_die(__('Insufficient permissions.', 'bfr'));
+        }
+        check_admin_referer('bfr-calc-edit');
+
+        // Global CPTs (may be "__custom__" with companion *_custom fields)
+        $input_cpt_sel  = sanitize_text_field($_POST['input_cpt_id_global'] ?? '');
+        $input_cpt_val  = ($input_cpt_sel === '__custom__')
+            ? sanitize_key($_POST['input_cpt_id_global_custom'] ?? '')
+            : sanitize_key($input_cpt_sel);
+
+        $target_cpt_sel = sanitize_text_field($_POST['target_cpt_id_global'] ?? '');
+        $target_cpt_val = ($target_cpt_sel === '__custom__')
+            ? sanitize_key($_POST['target_cpt_id_global_custom'] ?? '')
+            : sanitize_key($target_cpt_sel);
+
+        $relation_global = sanitize_key($_POST['relation_meta_key_global'] ?? '');
+
+        // Per-row arrays
+        $names           = is_array($_POST['name'] ?? null) ? (array)$_POST['name'] : [];
+        $target_meta     = is_array($_POST['target_meta_key'] ?? null) ? (array)$_POST['target_meta_key'] : [];
+        $input_meta_all  = is_array($_POST['input_meta_keys'] ?? null) ? (array)$_POST['input_meta_keys'] : [];
+
+        // Existing overrides
+        $overrides = $this->options->get_registry_overrides();
+        if (! is_array($overrides)) {
+            $overrides = [];
+        }
+
+        // Iterate all known calculators by slug
+        foreach ($this->registry as $slug => $cfg) {
+            $slug_key = sanitize_key((string)$slug);
+
+            // Name
+            $name_val = isset($names[$slug_key]) ? sanitize_text_field($names[$slug_key]) : ($cfg['name'] ?? $slug_key);
+
+            // Target meta key (could be "__custom__")
+            $t_sel = isset($target_meta[$slug_key]) ? sanitize_text_field($target_meta[$slug_key]) : '';
+            $t_key = ($t_sel === '__custom__')
+                ? sanitize_key($_POST['target_meta_key'][$slug_key . '_custom'] ?? ($_POST['target_meta_key'][$slug_key . '']['_custom'] ?? ($_POST['target_meta_key'][$slug_key . '_custom'] ?? '')))
+                : sanitize_key($t_sel);
+
+            // Input meta keys (array of values, each may be "__custom__")
+            $im_arr = isset($input_meta_all[$slug_key]) && is_array($input_meta_all[$slug_key])
+                ? (array)$input_meta_all[$slug_key]
+                : [];
+            $final_input_keys = [];
+
+            foreach ($im_arr as $idx => $sel) {
+                $sel = sanitize_text_field((string)$sel);
+                if ($sel === '') {
+                    continue;
+                }
+                if ($sel === '__custom__') {
+                    // Custom text field is posted as "{$base}[index]_custom"
+                    $custom_name = 'input_meta_keys';
+                    // Access via the posted structure:
+                    // $_POST['input_meta_keys'][slug][index.'_custom'] OR [index]_custom depending on PHP form parsing.
+                    $custom_val = '';
+                    // Try a few sensible keys due to PHP array parsing differences:
+                    if (isset($_POST[$custom_name][$slug_key][$idx . '_custom'])) {
+                        $custom_val = (string)$_POST[$custom_name][$slug_key][$idx . '_custom'];
+                    } elseif (isset($_POST[$custom_name][$slug_key][$idx]['_custom'])) {
+                        $custom_val = (string)$_POST[$custom_name][$slug_key][$idx]['_custom'];
+                    } elseif (isset($_POST[$custom_name][$slug_key . '_custom'][$idx])) {
+                        $custom_val = (string)$_POST[$custom_name][$slug_key . '_custom'][$idx];
+                    }
+                    $custom_val = sanitize_key($custom_val);
+                    if ($custom_val !== '') {
+                        $final_input_keys[] = $custom_val;
+                    }
+                } else {
+                    $final_input_keys[] = sanitize_key($sel);
+                }
+            }
+
+            // Build/merge override record for this slug
+            $overrides[$slug_key] = array_merge($overrides[$slug_key] ?? [], [
+                'name'              => $name_val,
+                'target_cpt_id'     => $target_cpt_val,
+                'target_meta_key'   => $t_key,
+                'input_cpt_id'      => [$input_cpt_val], // single global input CPT (stored as array to match schema)
+                'input_meta_keys'   => array_values(array_unique($final_input_keys)),
+                'relation_meta_key' => $relation_global,
+            ]);
+        }
+
+        // Persist
+        $this->options->save_registry_overrides($overrides);
+
+        // Redirect back with a small success flag
+        wp_safe_redirect(add_query_arg(['page' => 'bfr-calc-editor', 'bfr_msg' => 'saved'], admin_url('admin.php')));
+        exit;
     }
 }
