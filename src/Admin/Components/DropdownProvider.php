@@ -4,173 +4,214 @@ declare(strict_types=1);
 namespace BFR\Admin\Components;
 
 /**
- * Class DropdownProvider
+ * DropdownProvider
  *
- * Responsibilities:
- * - Provide option lists for CPTs and meta keys (WordPress first; optionally JetEngine if present).
- * - Render a generic <select> with a "Custom…" option that reveals a text input,
- *   plus a hidden "mode" input to make saves reliable.
+ * Small helper responsible for producing option lists and rendering
+ * a "select + Custom" input group. It DOES NOT render labels/descriptions.
  *
- * This class knows nothing about the BFR meta calculators/classes;
- * it's a generic dropdown provider.
+ * Usage:
+ *  - render_post_type_select_with_custom('target_cpt_id', 'target_cpt_id_custom', 'target_cpt_id_mode', $selected, $customPrefill)
+ *  - render_select_with_custom($name, $customName, $modeName, $selected, $customPrefill, $options)
+ *
+ * Security: outputs are escaped; JS is injected once per page load.
  */
 final class DropdownProvider
 {
-    /**
-     * Return a map of post type slug => human label.
-     * - Primary: WordPress public post types.
-     * - If JetEngine is active, merge in its CPTs (without overriding existing labels).
-     *
-     * @return array<string,string> slug => label
-     */
-    public function get_cpt_options(): array
-    {
-        $options = [];
-
-        // WordPress public CPTs
-        $types = get_post_types(['public' => true], 'objects');
-        foreach ($types as $slug => $obj) {
-            $label = $obj->labels->singular_name ?: $obj->label ?: $slug;
-            $options[(string)$slug] = (string)$label;
-        }
-
-        // JetEngine CPTs (if available)
-        if (function_exists('jet_engine')) {
-            try {
-                $jet = \jet_engine();
-                if (isset($jet->post_types)) {
-                    $items = $jet->post_types->get_items();
-                    if (is_array($items)) {
-                        foreach ($items as $item) {
-                            $slug  = (string)($item['slug'] ?? '');
-                            $label = (string)($item['labels']['singular_name'] ?? $slug);
-                            if ($slug !== '' && ! isset($options[$slug])) {
-                                $options[$slug] = $label;
-                            }
-                        }
-                    }
-                }
-            } catch (\Throwable $e) {
-                // Silently ignore JetEngine errors to avoid breaking admin.
-            }
-        }
-
-        asort($options, SORT_NATURAL | SORT_FLAG_CASE);
-        return $options;
-    }
+    /** Ensures our inline script is output only once per request. */
+    private static bool $scriptPrinted = false;
 
     /**
-     * Discover distinct meta keys used by posts of a given post type.
-     * - Uses a DB join of posts and postmeta.
-     * - Filters out leading underscore keys (internal), can be adjusted.
+     * Return a slug => label array of public post types.
      *
-     * @param string $post_type CPT slug
-     * @param int    $limit     Max number of keys to return
-     * @return array<string,string> meta_key => meta_key
+     * @return array<string,string>
      */
-    public function discover_meta_keys_for_post_type(string $post_type, int $limit = 200): array
+    public function get_post_type_options(): array
     {
-        global $wpdb;
-
-        $post_type = sanitize_key($post_type);
-        if ($post_type === '') {
-            return [];
-        }
-
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-        $sql = $wpdb->prepare(
-            "
-            SELECT DISTINCT pm.meta_key
-            FROM {$wpdb->postmeta} pm
-            INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-            WHERE p.post_type = %s
-              AND pm.meta_key NOT LIKE '\_%'
-            ORDER BY pm.meta_key ASC
-            LIMIT %d
-            ",
-            $post_type,
-            $limit
-        );
-
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-        $keys = $wpdb->get_col($sql);
-        if (! is_array($keys)) {
-            return [];
-        }
-
         $out = [];
-        foreach ($keys as $k) {
-            $k = (string)$k;
-            $out[$k] = $k;
+
+        $objects = get_post_types(['public' => true], 'objects');
+        foreach ($objects as $slug => $obj) {
+            // Build a nice label: "Destinations (destinations)"
+            $label = sprintf('%s (%s)', $obj->labels->singular_name ?? $slug, $slug);
+            $out[$slug] = $label;
         }
+
+        ksort($out, SORT_NATURAL | SORT_FLAG_CASE);
         return $out;
     }
 
     /**
-     * Render a <select> with provided options and an extra "Custom…" option.
-     * Also emits a sibling text input for custom, and a hidden input that records the mode:
-     * - "value": user picked a predefined option
-     * - "custom": user entered a custom value
+     * Best-effort list of meta keys for a given post type.
+     * Tries core-registered meta first, then allows external providers via a filter.
      *
-     * @param string               $select_name POST name for the <select>
-     * @param string               $custom_name POST name for the custom <input type="text">
-     * @param string               $mode_name   POST name for the hidden <input> storing 'value'|'custom'
-     * @param array<string,string> $options     value => label
-     * @param string               $selected    selected value (use '__custom__' to show custom)
-     * @param string               $custom_val  text to prefill in the custom box
-     * @param string|null          $id          optional id for the <select>
-     * @return string HTML
+     * @param string $postType
+     * @return array<string,string> meta_key => label
      */
-    public function render_select_with_custom(
-        string $select_name,
-        string $custom_name,
-        string $mode_name,
-        array $options,
-        string $selected = '',
-        string $custom_val = '',
-        ?string $id = null
-    ): string {
-        $id = $id ?: 'fld_' . md5($select_name . wp_rand());
+    public function get_meta_key_options(string $postType): array
+    {
+        $options = [];
 
-        // Append synthetic custom choice
-        $options_with_custom = $options + ['__custom__' => 'Custom…'];
-
-        $opts_html = '';
-        foreach ($options_with_custom as $val => $label) {
-            $opts_html .= sprintf(
-                '<option value="%s" %s>%s</option>',
-                esc_attr((string)$val),
-                selected($selected, (string)$val, false),
-                esc_html((string)$label)
-            );
+        // 1) Core-registered meta (if available)
+        if (function_exists('get_registered_meta_keys')) {
+            $registered = get_registered_meta_keys('post', $postType);
+            if (is_array($registered)) {
+                foreach ($registered as $key => $args) {
+                    if (is_string($key) && $key !== '') {
+                        $options[$key] = $key;
+                    }
+                }
+            }
         }
 
-        $is_custom   = ($selected === '__custom__');
-        $custom_style = $is_custom ? '' : 'style="display:none"';
-        $mode_value   = $is_custom ? 'custom' : 'value';
+        /**
+         * 2) Allow external providers (e.g., JetEngine) to contribute keys.
+         * Hook with:
+         *   add_filter('bfr_dropdown_meta_keys', function($keys, $postType) {
+         *       // return array_merge($keys, [...]);
+         *       return $keys;
+         *   }, 10, 2);
+         */
+        $options = apply_filters('bfr_dropdown_meta_keys', $options, $postType);
 
-        $html  = '<span class="bfr-select-with-custom" ';
-        $html .= 'data-select-id="'.esc_attr($id).'" ';
-        $html .= 'data-mode-name="'.esc_attr($mode_name).'">';
-        $html .= sprintf(
-            '<select id="%s" name="%s" class="regular-text">',
-            esc_attr($id),
-            esc_attr($select_name)
-        );
-        $html .= $opts_html . '</select> ';
-        $html .= sprintf(
-            '<input type="text" name="%s" value="%s" class="regular-text" %s/>',
-            esc_attr($custom_name),
-            esc_attr($custom_val),
-            $custom_style
-        );
-        $html .= sprintf(
-            '<input type="hidden" name="%s" value="%s" />',
-            esc_attr($mode_name),
-            esc_attr($mode_value)
-        );
-        $html .= '</span>';
+        // 3) Final tidy
+        ksort($options, SORT_NATURAL | SORT_FLAG_CASE);
+        return $options;
+    }
+
+    /**
+     * Render a "select + Custom" input group. No label/description.
+     *
+     * Structure:
+     *  <select name="$name">[opts..., "__custom__"]</select>
+     *  <input name="$customName" ... />  (hidden unless Custom is selected)
+     *  <input type="hidden" name="$modeName" value="value|custom" />
+     *
+     * @param string               $name         Name for the <select>
+     * @param string               $customName   Name for the custom <input type="text">
+     * @param string               $modeName     Name for the hidden mode input
+     * @param string               $selected     Currently selected value (if present in options)
+     * @param string               $customValue  Prefill for custom input
+     * @param array<string,string> $options      value => label
+     * @return string                          HTML (escaped)
+     */
+    public function render_select_with_custom(
+        string $name,
+        string $customName,
+        string $modeName,
+        string $selected,
+        string $customValue,
+        array $options
+    ): string {
+        // Normalize selection: if not in options but non-empty, treat as custom.
+        $hasSelectedInOptions = ($selected !== '' && array_key_exists($selected, $options));
+        $isCustom             = ! $hasSelectedInOptions && $selected !== '';
+        $selectValue          = $isCustom ? '__custom__' : $selected;
+
+        $idBase = sanitize_title($name);
+        $selectId = $idBase . '-select';
+        $customId = $idBase . '-custom';
+        $modeId   = $idBase . '-mode';
+
+        $html  = '';
+
+        // Inject the controller script only once.
+        if (! self::$scriptPrinted) {
+            $html .= $this->inline_controller_script();
+            self::$scriptPrinted = true;
+        }
+
+        // Build select
+        $html .= '<select name="' . esc_attr($name) . '" id="' . esc_attr($selectId) . '" ';
+        $html .= ' data-bfr-has-custom="1" data-bfr-custom-id="' . esc_attr($customId) . '" data-bfr-mode-id="' . esc_attr($modeId) . '">';
+
+        // Placeholder option
+        $html .= '<option value="">' . esc_html__('— Select —', 'bfr') . '</option>';
+
+        foreach ($options as $val => $label) {
+            $html .= '<option value="' . esc_attr($val) . '"' . selected($selectValue, $val, false) . '>';
+            $html .= esc_html($label) . '</option>';
+        }
+
+        // Custom sentinel option
+        $html .= '<option value="__custom__"' . selected($selectValue, '__custom__', false) . '>';
+        $html .= esc_html__('Custom…', 'bfr') . '</option>';
+
+        $html .= '</select> ';
+
+        // Custom input
+        $html .= '<input type="text" class="regular-text" name="' . esc_attr($customName) . '" id="' . esc_attr($customId) . '"';
+        $html .= ' value="' . esc_attr($isCustom ? $selected : $customValue) . '"';
+        $html .= $isCustom ? '' : ' style="display:none"';
+        $html .= ' />';
+
+        // Hidden mode input
+        $html .= '<input type="hidden" name="' . esc_attr($modeName) . '" id="' . esc_attr($modeId) . '" value="' . esc_attr($isCustom ? 'custom' : 'value') . '" />';
 
         return $html;
+    }
+
+    /**
+     * Convenience wrapper for post type dropdown with custom entry.
+     *
+     * @param string $name
+     * @param string $customName
+     * @param string $modeName
+     * @param string $selected
+     * @param string $customValue
+     * @return string
+     */
+    public function render_post_type_select_with_custom(
+        string $name,
+        string $customName,
+        string $modeName,
+        string $selected,
+        string $customValue
+    ): string {
+        $options = $this->get_post_type_options();
+        return $this->render_select_with_custom($name, $customName, $modeName, $selected, $customValue, $options);
+    }
+
+    /**
+     * Small inline controller to toggle custom inputs.
+     * Printed once per page.
+     *
+     * @return string
+     */
+    private function inline_controller_script(): string
+    {
+        $js = <<<JS
+<script>
+(function() {
+  function hook(el) {
+    if (!el || el.dataset.bfrHooked) return;
+    el.dataset.bfrHooked = '1';
+    var customId = el.getAttribute('data-bfr-custom-id');
+    var modeId   = el.getAttribute('data-bfr-mode-id');
+    var custom   = customId ? document.getElementById(customId) : null;
+    var mode     = modeId ? document.getElementById(modeId) : null;
+
+    function sync() {
+      if (!custom || !mode) return;
+      if (el.value === '__custom__') {
+        custom.style.display = '';
+        mode.value = 'custom';
+      } else {
+        custom.style.display = 'none';
+        mode.value = 'value';
+      }
+    }
+    el.addEventListener('change', sync);
+    // Initial state
+    sync();
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var sels = document.querySelectorAll('select[data-bfr-has-custom="1"]');
+    for (var i = 0; i < sels.length; i++) hook(sels[i]);
+  });
+})();
+</script>
+JS;
+        return $js;
     }
 }
