@@ -1,46 +1,45 @@
-<?php // Starts PHP mode
-declare(strict_types=1); // Enables strict typing for this file
+<?php // Begin PHP execution
+declare(strict_types=1); // Enforce strict typing
 
-namespace BFR\Admin\Components; // Defines the namespace for this class
+namespace BFR\Admin\Components; // Define namespace for the helper
 
-/** // Start of class-level DocBlock
- * Class DropdownArrayInput // Names the helper class
+/** // Class documentation
+ * Class DropdownArrayInput
  *
- * This helper renders multi-row dropdown inputs and embeds the JavaScript // Describes overall purpose
- * needed to toggle custom input fields and add/remove rows.  Each call to // Notes that JS is included here
- * render() outputs the HTML for one multi-row control and injects the JS // Explains what render() does
- * the first time it’s called. // Clarifies that JS is only injected once
+ * Renders multi-row dropdown inputs with a custom-value option, and // Summarize purpose
+ * injects the necessary JavaScript once per page to handle custom // Notes the JS injection
+ * toggles and add/remove row logic. // Describes additional behavior
  */
-final class DropdownArrayInput // Declares a final class that cannot be extended
+final class DropdownArrayInput // Declare a final class so it cannot be extended
 {
-		private DropdownProvider $dropdowns; // Holds a DropdownProvider instance for rendering select/custom controls
+		private DropdownProvider $dropdowns; // Holds the dropdown rendering dependency
 
-		/** // Static property DocBlock
-		 * Tracks whether the JavaScript has been injected to avoid duplicates. // Explains why this flag exists
-		 * @var bool // Declares the property type
+		/** // Static property documentation
+		 * Indicates if the JavaScript has already been printed. // Prevents duplicate scripts
+		 * @var bool
 		 */
-		private static bool $scriptInjected = false; // Initializes the static flag to false
+		private static bool $scriptInjected = false; // Initialize the static flag
 
-		/** // Constructor DocBlock
-		 * Injects the DropdownProvider dependency. // Explains the purpose of the constructor argument
-		 * @param DropdownProvider $dropdowns // Type-hints the dependency
+		/** // Constructor documentation
+		 * Accepts a DropdownProvider for rendering select/custom pairs. // Explain dependency injection
+		 * @param DropdownProvider $dropdowns // Type hint for the constructor argument
 		 */
 		public function __construct(DropdownProvider $dropdowns)
 		{
-				$this->dropdowns = $dropdowns; // Stores the injected DropdownProvider
+				$this->dropdowns = $dropdowns; // Store the provider for later use
 		}
 
-		/** // Method DocBlock
-		 * Renders a multi-row dropdown input and injects supporting JS once. // Summarizes this method’s purpose
+		/** // Method documentation
+		 * Outputs HTML for a multi-row dropdown and embeds supporting JS once. // Describe what render() does
 		 *
-		 * @param string               $base_select_name Name prefix for each select element (must include the slug) // Describes the first parameter
-		 * @param string               $base_custom_name Name prefix for each custom input (must include the slug) // Describes the second parameter
-		 * @param string               $base_mode_name   Name prefix for each hidden mode input (must include the slug) // Describes the third parameter
-		 * @param array<string,string> $options          List of options for the select dropdown (value => label) // Describes the select options
-		 * @param array<int,string>    $selected_values  Pre-selected values, one per row (empty to start with blank row) // Describes the selected values
-		 * @param array<int,string>    $custom_values    Pre-selected custom values, aligned with $selected_values // Describes the custom values
-		 * @param string|null          $data_post_type   Optional data attribute for post type identification // Describes the optional post type attribute
-		 * @return string HTML // Declares the return type
+		 * @param string               $base_select_name Prefix for select input names (including slug) // Explain parameter 1
+		 * @param string               $base_custom_name Prefix for custom input names (including slug) // Explain parameter 2
+		 * @param string               $base_mode_name   Prefix for hidden mode names (including slug) // Explain parameter 3
+		 * @param array<string,string> $options          Options for the select dropdown as value => label // Explain parameter 4
+		 * @param array<int,string>    $selected_values  Preselected values for each row // Explain parameter 5
+		 * @param array<int,string>    $custom_values    Preselected custom values aligned with rows // Explain parameter 6
+		 * @param string|null          $data_post_type   Optional data attribute indicating post type // Explain parameter 7
+		 * @return string HTML // Describe the return type
 		 */
 		public function render(
 				string $base_select_name,
@@ -51,25 +50,25 @@ final class DropdownArrayInput // Declares a final class that cannot be extended
 				array $custom_values = [],
 				?string $data_post_type = null
 		): string {
-				// If no selected values are supplied, start with one empty row
+				// Ensure there is at least one row even if no selections are provided
 				if (empty($selected_values)) {
-						$selected_values = ['']; // Ensures there is always at least one row
+						$selected_values = ['']; // Start with a single blank entry
 				}
 
-				$html  = '<div class="bfr-metakeys-multi"'; // Begins the outer container with the required class
-				if ($data_post_type !== null && $data_post_type !== '') { // Checks if a post type data attribute was provided
-						$html .= ' data-post-type="' . esc_attr($data_post_type) . '"'; // Adds a data-post-type attribute for context
+				$html  = '<div class="bfr-metakeys-multi"'; // Open the container element
+				if ($data_post_type !== null && $data_post_type !== '') { // Check for a post type attribute
+						$html .= ' data-post-type="' . esc_attr($data_post_type) . '"'; // Append the post type as a data attribute
 				}
-				$html .= '>'; // Closes the opening div tag
+				$html .= '>'; // Close the opening tag
 
-				foreach ($selected_values as $i => $sel) { // Iterates over each preselected value to build rows
-						$sel = (string)$sel; // Casts the selected value to a string
-						$custom = (string)($custom_values[$i] ?? ''); // Retrieves the corresponding custom value or defaults to an empty string
-						$select_name = $base_select_name . '[' . $i . ']'; // Constructs the name for the select element in this row
-						$custom_name = $base_custom_name . '[' . $i . ']'; // Constructs the name for the custom input element in this row
-						$mode_name   = $base_mode_name   . '[' . $i . ']'; // Constructs the name for the hidden mode field in this row
+				foreach ($selected_values as $i => $sel) { // Loop through each provided selection
+						$sel = (string)$sel; // Cast the selected value to a string
+						$custom = (string)($custom_values[$i] ?? ''); // Retrieve the corresponding custom value or default to empty
+						$select_name = $base_select_name . '[' . $i . ']'; // Construct the select name for this row
+						$custom_name = $base_custom_name . '[' . $i . ']'; // Construct the custom input name for this row
+						$mode_name   = $base_mode_name   . '[' . $i . ']'; // Construct the hidden mode input name for this row
 
-						$html .= '<div class="bfr-metakeys-row" style="margin-bottom:6px">'; // Opens a container for the row with a bottom margin
+						$html .= '<div class="bfr-metakeys-row" style="margin-bottom:6px">'; // Start a row container with bottom margin
 						$html .= $this->dropdowns->render_select_with_custom(
 								$select_name,
 								$custom_name,
@@ -77,60 +76,61 @@ final class DropdownArrayInput // Declares a final class that cannot be extended
 								$options,
 								$sel,
 								$custom
-						); // Delegates the rendering of the select and its custom input to DropdownProvider
-						$html .= ' <button type="button" class="button bfr-remove-row" aria-label="Remove">–</button>'; // Adds a button to remove this row
-						$html .= '</div>'; // Closes the row container
+						); // Use the DropdownProvider to render the select and custom text input
+						$html .= ' <button type="button" class="button bfr-remove-row" aria-label="Remove">–</button>'; // Add a remove-row button
+						$html .= '</div>'; // Close the row container
 				}
-				$html .= '<p><button type="button" class="button button-secondary bfr-add-row">Add key +</button></p>'; // Adds a button to duplicate the last row
-				$html .= '</div>'; // Closes the outer container
+				$html .= '<p><button type="button" class="button button-secondary bfr-add-row">Add key +</button></p>'; // Add a button to duplicate the last row
+				$html .= '</div>'; // Close the outer container
 
-				// Injects the JavaScript once per page to handle toggling custom inputs and adding/removing rows
-				if (! self::$scriptInjected) { // Checks if the script has already been added
-						$html .= "\n<script>\n"; // Opens the script tag
-						$html .= "(function(){\n"; // Immediately-invoked function to avoid polluting the global scope
-						$html .= "  function bindSelectWithCustom(wrapper){\n"; // Defines a helper that binds select/custom logic
-						$html .= "    var sel = wrapper.querySelector(\"select\");\n"; // Grabs the select element within the wrapper
-						$html .= "    var txt = wrapper.querySelector(\"input[type=\\\"text\\\"]\");\n"; // Grabs the custom text input within the wrapper
-						$html .= "    var modeName = wrapper.getAttribute(\"data-mode-name\");\n"; // Reads the name of the hidden mode input
-						$html .= "    function update(){\n"; // Defines an update function to sync the controls
-						$html .= "      if (!sel || !modeName) return;\n"; // If there is no select or mode name, do nothing
-						$html .= "      var isCustom = sel.value === \"__custom__\";\n"; // Checks if the custom option is selected
-						$html .= "      if (txt) txt.style.display = isCustom ? \"\" : \"none\";\n"; // Shows or hides the text input depending on selection
-						$html .= "      var hidden = wrapper.querySelector(\"input[type=\\\"hidden\\\"][name=\\\"\" + modeName + \"\\\"]\");\n"; // Finds the hidden mode input
-						$html .= "      if (hidden) hidden.value = isCustom ? \"custom\" : \"value\";\n"; // Updates the hidden input value to reflect the current mode
-						$html .= "    }\n"; // Ends the update function definition
-						$html .= "    if (sel) sel.addEventListener(\"change\", update);\n"; // Registers the update function to run when the select changes
-						$html .= "    update();\n"; // Calls update immediately to set the initial state
-						$html .= "  }\n"; // Ends the bindSelectWithCustom helper
-						$html .= "  document.querySelectorAll(\".bfr-select-with-custom\").forEach(bindSelectWithCustom);\n"; // Binds all existing select-with-custom wrappers on the page
-						$html .= "  document.querySelectorAll(\".bfr-metakeys-multi\").forEach(function(block){\n"; // Iterates over each multi-row block
-						$html .= "    function rebindRow(row){\n"; // Defines a helper to bind events on a newly added row
-						$html .= "      row.querySelectorAll(\".bfr-select-with-custom\").forEach(bindSelectWithCustom);\n"; // Binds select/custom logic for each control in the row
-						$html .= "      var rem = row.querySelector(\".bfr-remove-row\");\n"; // Finds the remove button in the row
-						$html .= "      if (rem) rem.addEventListener(\"click\", function(){\n"; // If found, attaches a click handler
-						$html .= "        var rows = block.querySelectorAll(\".bfr-metakeys-row\");\n"; // Counts all current rows
-						$html .= "        if (rows.length > 1) row.remove();\n"; // Removes the row only if more than one remain
-						$html .= "      });\n"; // Ends the click handler
-						$html .= "    }\n"; // Ends rebindRow helper
-						$html .= "    block.querySelectorAll(\".bfr-metakeys-row\").forEach(rebindRow);\n"; // Binds all initial rows
-						$html .= "    var addBtn = block.querySelector(\".bfr-add-row\");\n"; // Finds the add-row button within the block
-						$html .= "    if (addBtn) addBtn.addEventListener(\"click\", function(){\n"; // If found, attaches a click handler
-						$html .= "      var rows = block.querySelectorAll(\".bfr-metakeys-row\");\n"; // Gets all current rows
-						$html .= "      var last = rows[rows.length - 1];\n"; // Selects the last row
-						$html .= "      if (!last) return;\n"; // If no rows exist, abort
-						$html .= "      var clone = last.cloneNode(true);\n"; // Deep-clones the last row
-						$html .= "      var sel2 = clone.querySelector(\"select\"); if (sel2) sel2.value = \"\";\n"; // Resets the select in the clone
-						$html .= "      var txt2 = clone.querySelector(\"input[type=\\\"text\\\"]\"); if (txt2){ txt2.value = \"\"; txt2.style.display = \"none\"; }\n"; // Resets and hides the text input in the clone
-						$html .= "      var hid2 = clone.querySelector(\"input[type=\\\"hidden\\\"]\"); if (hid2) hid2.value = \"value\";\n"; // Resets the hidden mode field in the clone
-						$html .= "      addBtn.parentNode.parentNode.insertBefore(clone, addBtn.parentNode);\n"; // Inserts the clone before the add button's container
-						$html .= "      rebindRow(clone);\n"; // Binds the appropriate events on the cloned row
-						$html .= "    });\n"; // Ends addBtn click handler
-						$html .= "  });\n"; // Ends forEach for each block
-						$html .= "})();\n"; // Immediately invokes the function to set up event handlers
-						$html .= "</script>\n"; // Closes the script tag
-						self::$scriptInjected = true; // Marks the script as injected so it won't be added again
+				// Inject the JavaScript once per page after all rows are rendered
+				if (! self::$scriptInjected) { // Check if the script has not been output yet
+						$html .= "\n<script>\n"; // Begin the script element
+						// Wait for the DOM to be fully parsed before binding handlers to ensure all calculators are present
+						$html .= "document.addEventListener(\"DOMContentLoaded\", function(){\n"; // Add a DOMContentLoaded listener
+						$html .= "  function bindSelectWithCustom(wrapper){\n"; // Define a helper to bind select/custom interactions
+						$html .= "    var sel = wrapper.querySelector(\"select\");\n"; // Find the select element in the wrapper
+						$html .= "    var txt = wrapper.querySelector(\"input[type=\\\"text\\\"]\");\n"; // Find the custom text input in the wrapper
+						$html .= "    var modeName = wrapper.getAttribute(\"data-mode-name\");\n"; // Get the name of the hidden mode input
+						$html .= "    function update(){\n"; // Define an update function for toggling visibility
+						$html .= "      if (!sel || !modeName) return;\n"; // If select or mode name is missing, exit early
+						$html .= "      var isCustom = sel.value === \"__custom__\";\n"; // Determine if the custom option is selected
+						$html .= "      if (txt) txt.style.display = isCustom ? \"\" : \"none\";\n"; // Show or hide the custom text input
+						$html .= "      var hidden = wrapper.querySelector(\"input[type=\\\"hidden\\\"][name=\\\"\" + modeName + \"\\\"]\");\n"; // Find the hidden mode input
+						$html .= "      if (hidden) hidden.value = isCustom ? \"custom\" : \"value\";\n"; // Set the hidden input to indicate the mode
+						$html .= "    }\n"; // End of update function
+						$html .= "    if (sel) sel.addEventListener(\"change\", update);\n"; // Attach the update function to the select’s change event
+						$html .= "    update();\n"; // Run the update function immediately to initialize visibility
+						$html .= "  }\n"; // End of bindSelectWithCustom helper
+						$html .= "  document.querySelectorAll(\".bfr-select-with-custom\").forEach(bindSelectWithCustom);\n"; // Attach handlers to all select/custom wrappers
+						$html .= "  document.querySelectorAll(\".bfr-metakeys-multi\").forEach(function(block){\n"; // Iterate over all multi-row blocks
+						$html .= "    function rebindRow(row){\n"; // Define a helper to bind events for a single row
+						$html .= "      row.querySelectorAll(\".bfr-select-with-custom\").forEach(bindSelectWithCustom);\n"; // Bind select/custom handling for the row
+						$html .= "      var rem = row.querySelector(\".bfr-remove-row\");\n"; // Find the remove button in the row
+						$html .= "      if (rem) rem.addEventListener(\"click\", function(){\n"; // Attach a click handler to the remove button
+						$html .= "        var rows = block.querySelectorAll(\".bfr-metakeys-row\");\n"; // Count how many rows exist in the block
+						$html .= "        if (rows.length > 1) row.remove();\n"; // Only remove the row if more than one remain
+						$html .= "      });\n"; // End of remove button handler
+						$html .= "    }\n"; // End of rebindRow helper
+						$html .= "    block.querySelectorAll(\".bfr-metakeys-row\").forEach(rebindRow);\n"; // Bind events for all existing rows
+						$html .= "    var addBtn = block.querySelector(\".bfr-add-row\");\n"; // Find the add-row button in the block
+						$html .= "    if (addBtn) addBtn.addEventListener(\"click\", function(){\n"; // Attach a click handler to duplicate the last row
+						$html .= "      var rows = block.querySelectorAll(\".bfr-metakeys-row\");\n"; // Retrieve all current rows
+						$html .= "      var last = rows[rows.length - 1];\n"; // Identify the last row to clone
+						$html .= "      if (!last) return;\n"; // If no rows exist, abort the duplication
+						$html .= "      var clone = last.cloneNode(true);\n"; // Create a deep clone of the last row
+						$html .= "      var sel2 = clone.querySelector(\"select\"); if (sel2) sel2.value = \"\";\n"; // Reset the select in the cloned row
+						$html .= "      var txt2 = clone.querySelector(\"input[type=\\\"text\\\"]\"); if (txt2){ txt2.value = \"\"; txt2.style.display = \"none\"; }\n"; // Reset and hide the custom text input in the clone
+						$html .= "      var hid2 = clone.querySelector(\"input[type=\\\"hidden\\\"]\"); if (hid2) hid2.value = \"value\";\n"; // Reset the hidden mode input in the clone
+						$html .= "      addBtn.parentNode.parentNode.insertBefore(clone, addBtn.parentNode);\n"; // Insert the cloned row before the add button
+						$html .= "      rebindRow(clone);\n"; // Bind events on the cloned row
+						$html .= "    });\n"; // End of addBtn click handler
+						$html .= "  });\n"; // End of forEach over multi-row blocks
+						$html .= "});\n"; // Close the DOMContentLoaded listener
+						$html .= "</script>\n"; // Close the script tag
+						self::$scriptInjected = true; // Mark the script as injected so it’s not added again
 				}
 
-				return $html; // Returns the complete HTML including the script (on first call)
+				return $html; // Return the complete HTML with script (on first call)
 		}
 }
