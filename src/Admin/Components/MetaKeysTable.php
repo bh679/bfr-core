@@ -80,53 +80,6 @@ final class MetaKeysTable
 
         echo '</tbody></table>';
 
-        // Minimal JS (toggle custom + add/remove rows)
-        ?>
-        <script>
-        (function(){
-          function bindSelectWithCustom(wrapper){
-            var sel = wrapper.querySelector('select');
-            var txt = wrapper.querySelector('input[type="text"]');
-            var modeName = wrapper.getAttribute('data-mode-name');
-            function update(){
-              if (!sel || !modeName) return;
-              var isCustom = sel.value === '__custom__';
-              if (txt) txt.style.display = isCustom ? '' : 'none';
-              var hidden = wrapper.querySelector('input[type="hidden"][name="'+modeName+'"]');
-              if (hidden) hidden.value = isCustom ? 'custom' : 'value';
-            }
-            if (sel) sel.addEventListener('change', update);
-            update();
-          }
-          document.querySelectorAll('.bfr-select-with-custom').forEach(bindSelectWithCustom);
-
-          document.querySelectorAll('.bfr-metakeys-multi').forEach(function(block){
-            function rebindRow(row){
-              row.querySelectorAll('.bfr-select-with-custom').forEach(bindSelectWithCustom);
-              var rem = row.querySelector('.bfr-remove-row');
-              if (rem) rem.addEventListener('click', function(){
-                var rows = block.querySelectorAll('.bfr-metakeys-row');
-                if (rows.length > 1) row.remove();
-              });
-            }
-            block.querySelectorAll('.bfr-metakeys-row').forEach(rebindRow);
-            var addBtn = block.querySelector('.bfr-add-row');
-            if (addBtn) addBtn.addEventListener('click', function(){
-              var rows = block.querySelectorAll('.bfr-metakeys-row');
-              var last = rows[rows.length - 1];
-              if (!last) return;
-              var clone = last.cloneNode(true);
-              var sel = clone.querySelector('select'); if (sel) sel.value='';
-              var txt = clone.querySelector('input[type="text"]'); if (txt){ txt.value=''; txt.style.display='none'; }
-              var hid = clone.querySelector('input[type="hidden"]'); if (hid) hid.value='value';
-              addBtn.parentNode.parentNode.insertBefore(clone, addBtn.parentNode);
-              rebindRow(clone);
-            });
-          });
-        })();
-        </script>
-        <?php
-
         return (string)ob_get_clean();
     }
 
