@@ -97,23 +97,25 @@ final class CalculatedMetaEditor
 
         // Target CPT (select-with-custom)
         echo '<tr><th scope="row">' . esc_html__('Target CPT (post type)', 'bfr') . '</th><td>';
-        echo $dropdowns->render_post_type_select_with_custom(
+        echo $dropdowns->render_select_with_custom(
             'target_cpt_id',
             'target_cpt_id_custom',
             'target_cpt_id_mode',
             $targetCpt,
-            '' // no custom prefill here
+            '',
+            $dropdowns->get_post_type_options()
         );
         echo '</td></tr>';
 
         // Input CPT (select-with-custom)
         echo '<tr><th scope="row">' . esc_html__('Input CPT (post type)', 'bfr') . '</th><td>';
-        echo $dropdowns->render_post_type_select_with_custom(
+        echo $dropdowns->render_select_with_custom(
             'input_cpt_id',
             'input_cpt_id_custom',
             'input_cpt_id_mode',
             $inputCpt,
-            ''
+            '',
+            $dropdowns->get_post_type_options()
         );
         echo '</td></tr>';
 
