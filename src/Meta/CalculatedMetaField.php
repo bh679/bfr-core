@@ -14,6 +14,26 @@ use BFR\Utils\Str;
  */
 abstract class CalculatedMetaField
 {
+    // Inside BFR\Meta\CalculatedMetaField (e.g., near the top of the class)
+    protected static array $registry = [];                          // Holds the registry array in memory
+
+    /**
+     * Load registry from Meta/registry.php once and cache it.
+     *
+     * @return array<string,array> The registry map
+     */
+    public static function registry(): array {
+        // If already loaded, return it
+        if (!empty(self::$registry)) {                              // Avoid repeated file loads
+            return self::$registry;                                 // Return cached registry
+        }
+        // Resolve file path relative to this file
+        $path = dirname(__FILE__) . '/registry.php';                // /src/Meta/registry.php
+        // Load if the file exists, otherwise keep empty
+        self::$registry = file_exists($path) ? (array) require $path : [];  // Include once, capture returned array
+        return self::$registry;                                     // Provide registry to callers
+    }
+    
     protected string $name;
     protected string $slug;
 
