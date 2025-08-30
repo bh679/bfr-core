@@ -44,7 +44,7 @@ final class MetaKeysTable
         echo '<th style="width:30%">Calculator</th>';
         echo '<th style="width:20%">Target Meta Key</th>';
         echo '<th style="width:20%">Calculation</th>';
-        echo '<th style="width:30%">Input Meta Keys</th>';
+        echo '<th style="width:20%">Input Meta Keys</th>';
         echo '</tr></thead><tbody>';
 
         foreach ($this->registry as $slug => $cfg) {
@@ -70,22 +70,22 @@ final class MetaKeysTable
             echo '<p class="description">Pick a known key or choose <em>Custom…</em> and type your own.</p>';
             echo '</td>';
 
-                        // Column 3: Calculation (class)
-            echo '<td>';                                    // Open the table cell for the "Calculation" column
-            $calc_class = (string)($cfg['calculation'] ?? $cfg['class'] ?? ''); // Read the class from config ('calculation' preferred, fallback to 'class')
-            if ($calc_class === '') {                           // If nothing is set
-                echo '<em>—</em>';                          // Show an em-dash placeholder
-            } else {
-                $fqcn  = ltrim($calc_class, '\\');                  // Normalize: strip leading backslash from FQCN
-                $pos   = strrpos($fqcn, '\\');                      // Find last backslash to extract short class name
-                $short = ($pos !== false) ? substr($fqcn, $pos + 1) : $fqcn;        // Short class name (e.g., "MaxDepth")
-                echo '<code title="' . esc_attr($fqcn) . '">';              // Start code tag; put full FQCN in tooltip
-                echo esc_html($short);                          // Render short class name safely
-                echo '</code>';                             // Close code tag
-            }
-            echo '</td>';                                   // Close the "Calculation" cell
+            // Column 3: Calculation (class) — dropdown bound to the registry
+            echo '<td>';
 
-            // Column 3: Input Meta Keys (multi)
+            // Determine the currently configured class value (prefer 'calculation', fallback to 'class', else empty).
+            $current_class = (string)($cfg['calculation'] ?? $cfg['class'] ?? '');
+
+            // Flat POST name so it matches save_for_slug() (calculation[$slug])
+            $field_name = 'calculation[' . esc_attr($slug) . ']';
+
+            // Render the dropdown pulling options from \BFR\Meta\CalculatedMetaField::registry()
+            echo $this->inputs->renderClassDropdown($field_name, $current_class);
+
+            echo '</td>';  
+
+
+            // Column 4: Input Meta Keys (multi)
             echo '<td>';
             echo $this->inputs->render_input_meta_keys($slug, $imeta, []);
             echo '<p class="description">Add as many input keys as needed. Each can be a known key or <em>Custom…</em>.</p>';
@@ -123,6 +123,11 @@ final class MetaKeysTable
                 'input_cpt_id'      => [$input_cpt],
                 'input_meta_keys'   => $resolved['input_meta_keys'],
                 'relation_meta_key' => $relation_key,
+
+                // NEW: persist class selection (resolver already validated against registry)
+                'calculation'       => (string)($resolved['calculation'] ?? ''), // FQCN
+                'class'             => (string)($resolved['class'] ?? ''),       // legacy mirror
+
                 // Preserve original name/description if present:
                 'name'              => (string)($cfg['name'] ?? $slug_key),
                 'description'       => (string)($cfg['description'] ?? ''),

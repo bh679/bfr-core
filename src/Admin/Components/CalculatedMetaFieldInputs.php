@@ -4,6 +4,7 @@ declare(strict_types=1); // Enforces strict typing rules
 namespace BFR\Admin\Components; // Declares the namespace for this class
 
 use BFR\Admin\Components\DropdownArrayInput; // Imports the DropdownArrayInput class for use in this file
+use BFR\Meta\CalculatedMetaField;
 
 /** // Begins the class-level DocBlock
  * Class CalculatedMetaFieldInputs // Names the class
@@ -98,48 +99,149 @@ final class CalculatedMetaFieldInputs // Declares a final class that cannot be e
                 ); // Delegates rendering of multi-row input meta keys to the helper
         }
 
-        /** // Begins the DocBlock for saving posted values
-         * Resolve (save) the posted values ONLY for this calculator slug. // Explains what this method does
-         * Returns an array with keys: // Lists the keys returned
-         * - target_meta_key (string) // Returned target meta key
-         * - input_meta_keys (string[]) // Returned array of input meta keys
+
+
+        /**
+         * Render a <select> for choosing a calculator class from the registry.
          *
-         * @param string               $slug        Calculator slug // Describes the slug parameter
-         * @param array<string,mixed>  $existingCfg Existing config (to preserve values when none posted) // Describes the existing configuration
-         * @return array{target_meta_key:string,input_meta_keys:array<int,string>} // Specifies the return type structure
+         * @param string $name                  The HTML name attribute for the <select>.
+         * @param string $selected_fqcn The currently selected FQCN (e.g., "\BFR\Meta\Fields\MaxDepth").
+         * @return string                               The full HTML for the dropdown.
          */
-        public function save_for_slug(string $slug, array $existingCfg): array
-        {
-                $slug_key = sanitize_key($slug); // Sanitizes the slug to be used as an array key
+        public function renderClassDropdown(string $name, string $selected_fqcn): string {
+                // Load the cached registry once (fast; static cache inside CalculatedMetaField).
+                $registry = \BFR\Meta\CalculatedMetaField::registry();          // Map: slug => ['name','class',...]
+                
+                // Start output buffering so we can return a complete HTML string.
+                ob_start();                                                                                                     // Begin capturing generated HTML
+                
+                // Open the <select>; add a predictable CSS class for styling/hooks if needed.
+                echo '<select name="' . esc_attr($name) . '" class="bfr-class-select">';        // Start select for class chooser
+                
+                // First, add a neutral "Choose…" placeholder (not selected by default if we have a match).
+                echo '<option value="">— Select calculation class —</option>';                          // Placeholder option
+                
+                // Iterate over registry entries to build options.
+                foreach ($registry as $slug => $entry) {                                                                        // Each calculator descriptor
+                        // Resolve display name and FQCN safely.
+                        $label = isset($entry['name']) ? (string)$entry['name'] : (string)$slug;        // Prefer human name
+                        $fqcn  = isset($entry['class']) ? (string)$entry['class'] : '';                 // Fully qualified class name
+                        
+                        // Compute selection state.
+                        $selected = selected($selected_fqcn, $fqcn, false);                                             // WP helper returns ' selected="selected"' or ''
+                        
+                        // Print the option; show the friendly name, but keep the FQCN as the value.
+                        echo '<option value="' . esc_attr($fqcn) . '" ' . $selected . '>';              // Open option tag with value
+                        echo esc_html($label);                                                                                                  // Visible text for the option
+                        echo '</option>';                                                                                                               // Close option
+                }
+                
+                // Close the <select>.
+                echo '</select>';                                                                                                                       // End select
+                
+                // Return the composed HTML string.
+                return (string) ob_get_clean();                                                                                         // Return buffered HTML
+        }
+        
 
-                // Target meta key
+        /**
+         * Resolve (save) the posted values ONLY for this calculator slug.
+         * Returns an array with keys:
+         * - target_meta_key (string)
+         * - input_meta_keys (string[])
+         * - calculation (string)      // NEW: FQCN from registry
+         * - class (string)            // NEW: legacy mirror of 'calculation'
+         *
+         * @param string               $slug        Calculator slug
+         * @param array<string,mixed>  $existingCfg Existing config (to preserve values when none posted)
+         * @return array{
+         *   target_meta_key:string,
+         *   input_meta_keys:array<int,string>,
+         *   calculation:string,
+         *   class:string
+         * }
+         */
+        public function save_for_slug(string $slug, array $existingCfg): array {
+                // Normalize the row key used across POST arrays
+                $slug_key = sanitize_key($slug);                                                                // Slug-safe array index (e.g., 'max_depth')
+
+                // ---------------------------
+                // Target meta key (existing)
+                // ---------------------------
                 $t_sel  = isset($_POST['target_meta_key'][$slug_key])
-                        ? sanitize_text_field((string)$_POST['target_meta_key'][$slug_key])
-                        : ''; // Reads the selected target key from POST and sanitizes it
+                        ? (string) wp_unslash($_POST['target_meta_key'][$slug_key])     // Raw selected value from dropdown
+                        : '';
                 $t_mode = isset($_POST['target_meta_key_mode'][$slug_key])
-                        ? sanitize_text_field((string)$_POST['target_meta_key_mode'][$slug_key])
-                        : 'value'; // Reads the mode (value or custom) for the target key
+                        ? (string) wp_unslash($_POST['target_meta_key_mode'][$slug_key])
+                        : 'value';
                 $t_cus  = isset($_POST['target_meta_key_custom'][$slug_key])
-                        ? sanitize_key((string)$_POST['target_meta_key_custom'][$slug_key])
-                        : ''; // Reads the custom target key if provided
+                        ? (string) wp_unslash($_POST['target_meta_key_custom'][$slug_key])
+                        : '';
 
-                $target_key = ($t_mode === 'custom') ? $t_cus : sanitize_key($t_sel); // Chooses custom or selected value based on the mode
+                $target_key = ($t_mode === 'custom') ? sanitize_key($t_cus) : sanitize_key($t_sel);
                 if ($target_key === '') {
-                        $target_key = (string)($existingCfg['target_meta_key'] ?? ''); // Falls back to existing config if nothing was posted
+                        $target_key = (string) ($existingCfg['target_meta_key'] ?? '');         // Fallback to existing value
                 }
 
-                // Input meta keys – delegate parsing to the dropdown array helper
+                // ------------------------------------------
+                // Input meta keys (existing via array helper)
+                // ------------------------------------------
                 $final_input = $this->arrayDropdown->parse_post(
-                        'input_meta_keys',
-                        'input_meta_keys_custom',
-                        'input_meta_keys_mode',
-                        $slug_key,
-                        (array)($existingCfg['input_meta_keys'] ?? [])
-                ); // Uses the helper to parse the array of input meta keys
+                        'input_meta_keys',                                                                                              // Base name for dropdown values
+                        'input_meta_keys_custom',                                                                               // Base name for custom values
+                        'input_meta_keys_mode',                                                                                 // Base name for per-item mode
+                        $slug_key,                                                                                                              // Row key
+                        (array) ($existingCfg['input_meta_keys'] ?? [])                                 // Existing default array
+                );
 
+                // ---------------------------------------------------
+                // NEW: Calculation class (FQCN) via registry dropdown
+                // ---------------------------------------------------
+                // Expect the admin dropdown to post as calculation[$slug]
+                $posted_calc = isset($_POST['calculation'][$slug_key])
+                        ? (string) wp_unslash($_POST['calculation'][$slug_key])                 // Raw posted FQCN (may include leading '\')
+                        : '';
+
+                // Sanitize the FQCN while preserving namespace separators:
+                // - allow backslashes, A–Z, a–z, 0–9, and underscores
+                $posted_calc = ltrim($posted_calc, '\\');                                                               // Normalize away any leading backslash
+                $posted_calc = preg_replace('/[^A-Za-z0-9_\\\\]/', '', $posted_calc) ?? '';
+                $posted_calc = ($posted_calc !== '') ? '\\' . $posted_calc : '';                // Store as leading-backslash FQCN
+
+                // Load the registry once (cached inside CalculatedMetaField)
+                $registry = \BFR\Meta\CalculatedMetaField::registry();                                  // Map: slug => ['name','class',...]
+                $allowed  = [];                                                                                                                 // Build a fast lookup of allowed FQCNs
+                foreach ($registry as $r) {
+                        if (!empty($r['class']) && is_string($r['class'])) {
+                                $fq = '\\' . ltrim($r['class'], '\\');                                                  // Normalize registry class form
+                                $allowed[$fq] = true;                                                                                   // Mark allowed
+                        }
+                }
+
+                // Determine the final class to use:
+                // Priority: valid posted class → valid existing 'calculation' → valid existing 'class' → ''
+                $existing_calc  = '\\' . ltrim((string) ($existingCfg['calculation'] ?? ''), '\\');
+                $existing_class = '\\' . ltrim((string) ($existingCfg['class'] ?? ''), '\\');
+
+                if ($posted_calc !== '' && isset($allowed[$posted_calc])) {
+                        $final_calc = $posted_calc;                                                                             // Accept the posted value if in registry
+                } elseif ($existing_calc !== '' && isset($allowed[$existing_calc])) {
+                        $final_calc = $existing_calc;                                                                           // Keep existing 'calculation' if valid
+                } elseif ($existing_class !== '' && isset($allowed[$existing_class])) {
+                        $final_calc = $existing_class;                                                                          // Fallback to legacy 'class' if valid
+                } else {
+                        $final_calc = '';                                                                                                       // No valid class available
+                }
+
+                // Mirror into legacy 'class' for backward compatibility
+                $legacy_class = $final_calc;
+
+                // Return the merged row; CalculatedMetaEditor can safely ignore unknown keys if it only reads needed ones
                 return [
-                        'target_meta_key' => $target_key, // Returns the resolved target key
-                        'input_meta_keys' => $final_input, // Returns the resolved array of input meta keys
-                ]; // Returns an associative array with target and input keys
+                        'target_meta_key' => $target_key,                                                                       // Existing: target meta key
+                        'input_meta_keys' => $final_input,                                                                      // Existing: list of input meta keys
+                        'calculation'     => $final_calc,                                                                       // NEW: selected FQCN (from registry)
+                        'class'           => $legacy_class,                                                                     // NEW: legacy mirror for older code paths
+                ];
         }
 }
