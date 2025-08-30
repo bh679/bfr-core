@@ -69,6 +69,21 @@ final class MetaKeysTable
             echo '<p class="description">Pick a known key or choose <em>Custom…</em> and type your own.</p>';
             echo '</td>';
 
+                        // Column 3: Calculation (class)
+            echo '<td>';                                    // Open the table cell for the "Calculation" column
+            $calc_class = (string)($cfg['calculation'] ?? $cfg['class'] ?? ''); // Read the class from config ('calculation' preferred, fallback to 'class')
+            if ($calc_class === '') {                           // If nothing is set
+                echo '<em>—</em>';                          // Show an em-dash placeholder
+            } else {
+                $fqcn  = ltrim($calc_class, '\\');                  // Normalize: strip leading backslash from FQCN
+                $pos   = strrpos($fqcn, '\\');                      // Find last backslash to extract short class name
+                $short = ($pos !== false) ? substr($fqcn, $pos + 1) : $fqcn;        // Short class name (e.g., "MaxDepth")
+                echo '<code title="' . esc_attr($fqcn) . '">';              // Start code tag; put full FQCN in tooltip
+                echo esc_html($short);                          // Render short class name safely
+                echo '</code>';                             // Close code tag
+            }
+            echo '</td>';                                   // Close the "Calculation" cell
+
             // Column 3: Input Meta Keys (multi)
             echo '<td>';
             echo $this->inputs->render_input_meta_keys($slug, $imeta, []);
