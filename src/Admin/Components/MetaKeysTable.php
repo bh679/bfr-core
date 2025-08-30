@@ -42,8 +42,9 @@ final class MetaKeysTable
         echo '<table class="widefat fixed striped">';
         echo '<thead><tr>';
         echo '<th style="width:30%">Calculator</th>';
-        echo '<th style="width:30%">Target Meta Key</th>';
-        echo '<th style="width:40%">Input Meta Keys</th>';
+        echo '<th style="width:20%">Target Meta Key</th>';
+        echo '<th style="width:20%">Calculation</th>';
+        echo '<th style="width:30%">Input Meta Keys</th>';
         echo '</tr></thead><tbody>';
 
         foreach ($this->registry as $slug => $cfg) {
