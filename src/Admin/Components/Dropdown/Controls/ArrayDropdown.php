@@ -1,188 +1,166 @@
 <?php
-declare(strict_types=1);
+declare(strict_types=1);	// Enforce strict typing
 
-namespace BFR\Admin\Components\Dropdown\Controls;
+namespace BFR\Admin\Components\Dropdown\Controls;	// Controls namespace
 
-use BFR\Admin\Components\Dropdown\OptionProviderInterface;
-use BFR\Admin\Components\Dropdown\Rendering\SelectRenderer;
+use BFR\Admin\Components\Dropdown\OptionProviderInterface;			// Import interface
+use BFR\Admin\Components\Dropdown\Rendering\SelectRenderer;			// Import renderer
 
 /**
  * ArrayDropdown
- * - Repeatable dropdown list (adds/removes rows) using the same renderer per item.
+ *
+ * Extends SingleDropdown to manage an array of rows, each row containing
+ * (select [+ "Custom…"] + hidden mode) and +/- controls.
+ * It supports removing the last remaining row (leaving an empty array).
  */
-final class ArrayDropdown {
-	/** @var OptionProviderInterface */
-	private OptionProviderInterface $provider;
-	/** @var SelectRenderer */
-	private SelectRenderer $renderer;
+final class ArrayDropdown extends SingleDropdown
+{
+	/** @var string */
+	private string $rowClass = 'bfr-array-row';			// CSS hook for rows
+
+	/** @var string */
+	private string $wrapClass = 'bfr-array-wrap';		// CSS hook for wrapper
 
 	/**
-	 * @param OptionProviderInterface $provider	// Options for each row
-	 * @param SelectRenderer $renderer		// Shared renderer
+	 * Render an array dropdown set.
+	 *
+	 * @param string               $baseName       	Base name (e.g., "input_meta_keys[slug]")
+	 * @param list<string|null>    $currentValues  	Array of selected values (nulls allowed)
+	 * @param array<string,mixed>  $context        	Context for options provider
+	 * @param array<string,string> $attrsSelect    	Attributes for each select
+	 * @param string               $customBaseName 	Base for custom text names (e.g., "..._custom[slug]")
+	 * @param list<string|null>    $currentCustoms 	Array of custom texts aligned with $currentValues
+	 * @param string               $modeBaseName   	Base for hidden modes (e.g., "..._mode[slug]")
+	 * @return string                               	HTML block
 	 */
-	public function __construct(OptionProviderInterface $provider, SelectRenderer $renderer) {
-		// Save provider instance.
-		$this->provider = $provider;
-		// Save renderer instance.
-		$this->renderer = $renderer;
-	}
-
-	/**
-	 * Render a repeatable dropdown array control.
-	 * @param string $name_base		// Base name, e.g., 'registry[input_meta_keys]'
-	 * @param array<int,string> $values	// Current values array (may be empty)
-	 * @param array $context		// Provider context
-	 * @param array $args		// Renderer args applied per item (id is auto-suffixed)
-	 * @return string			// HTML block with add/remove UI
-	 */
-	public function render(string $name_base, array $values, array $context, array $args = []): string {
-		// Get the options once for all rows.
-		$options = $this->provider->get_options($context);
-
-		// Wrapper.
-		$html  = '<div class="bfr-array-dropdown" data-bfr-array>';
-		// Iterate existing values or at least one empty slot.
-		$rows = !empty($values) ? array_values($values) : [''];
-		foreach ($rows as $idx => $val) {
-			// Compose per-row name like registry[input_meta_keys][0]
-			$row_name = $name_base . '[' . $idx . ']';
-			// Compose per-row ID (unique).
-			$row_args = $args;
-			$row_args['id'] = ($args['id'] ?? $this->id_from_name($name_base)) . '-' . $idx;
-
-			// Row container with remove button.
-			$html .= '<div class="bfr-array-row" data-bfr-row>';
-			// Render one select row via shared renderer.
-			$html .= $this->renderer->render($row_name, $options, $val !== '' ? (string)$val : null, $row_args);
-			// Add a remove button per row.
-			$html .= ' <button type="button" class="button-link-delete" data-bfr-remove title="Remove">×</button>';
-			// Close row.
-			$html .= '</div>';
+	public function render_array(
+		string $baseName,
+		array $currentValues,
+		array $context = [],
+		array $attrsSelect = [],
+		string $customBaseName = '',
+		array $currentCustoms = [],
+		string $modeBaseName = ''
+	): string {
+		// Ensure we have at least one visible row (even if no values)
+		if (empty($currentValues)) {						// If no rows provided
+			$currentValues = [null];						// Seed single row
 		}
 
-		// Add button for new rows.
-		$html .= '<p><button type="button" class="button" data-bfr-add>Add another</button></p>';
-		// Close wrapper.
-		$html .= '</div>';
+		// Produce options once (same for all rows)
+		$options = $this->provider->get_options($context);	// Fetch options
 
-		// Enqueue/print minimal JS hook (or enqueue a shared file).
-		$html .= $this->inline_script();
+		// Open wrapper with data-name templates for JS cloning
+		$html  = '<div class="' . esc_attr($this->wrapClass) . '" ';	// Wrapper start
+		$html .= 'data-name="' . esc_attr($baseName) . '" ';			// Data: base name
+		$html .= 'data-name-custom="' . esc_attr($customBaseName) . '" ';	// Data: custom base
+		$html .= 'data-name-mode="' . esc_attr($modeBaseName) . '">';		// Data: mode base
 
-		// Return block.
-		return $html;
+		// Render each row
+		foreach (array_values($currentValues) as $i => $val) {			// Loop rows
+			$selectName = $baseName . '[' . $i . ']';						// Name for select
+			$customName = $customBaseName !== '' ? $customBaseName . '[' . $i . ']' : null;	// Name for custom
+			$modeName   = $modeBaseName   !== '' ? $modeBaseName   . '[' . $i . ']' : null;	// Name for mode
+			$customTxt  = $currentCustoms[$i] ?? null;						// Current custom text
+
+			$html .= '<div class="' . esc_attr($this->rowClass) . '">';		// Row start
+
+			// Row UI: select+custom+mode
+			$html .= $this->renderer->render(								// Render composite
+				$selectName,												// Select name
+				$val === null ? null : (string)$val,						// Selected value
+				$options,													// Options map
+				$attrsSelect,												// Attributes
+				$customName,												// Custom name
+				$customTxt === null ? null : (string)$customTxt,			// Custom text
+				$modeName													// Mode name
+			);
+
+			// +/- controls
+			$html .= ' <button type="button" class="button bfr-array-add" aria-label="Add">+</button>';	// Add button
+			$html .= ' <button type="button" class="button bfr-array-remove" aria-label="Remove">−</button>';	// Remove button
+
+			$html .= '</div>';												// Row end
+		}
+
+		$html .= '</div>';													// Wrapper end
+
+		// JS to manage add/remove (including allowing empty array)
+		$html .= $this->script_once();										// Inject once
+
+		return $html;														// Return markup
 	}
 
 	/**
-	 * Minimal behavior: add/remove rows; allow removing last row to yield empty array.
-	 * @return string
+	 * Small JS block; emitted once per page.
+	 *
+	 * @return string	Inline script
 	 */
-	private function inline_script(): string {
-		// Keep very small here; you can move to an enqueued file later.
-		$js = <<<HTML
-<script>
+	private function script_once(): string
+	{
+		static $done = false;												// Guard
+		if ($done) { return ''; }											// No-op on repeat
+		$done = true;														// Mark emitted
+
+		// Vanilla JS for cloning rows, renaming indices, and removing last row
+		return '<script>
 (function(){
-	// Delegate clicks within any .bfr-array-dropdown
-	document.addEventListener('click', function(e){
-		var addBtn = e.target.closest('[data-bfr-add]');
-		var rmBtn  = e.target.closest('[data-bfr-remove]');
-		if (!addBtn && !rmBtn) return;
+	function reindexRows(wrap){
+		const rows = Array.from(wrap.querySelectorAll("."+wrap.dataset.rowClass));	// (not used; kept for extension)
+		// Intentionally simple; we rebuild names at clone-time instead
+	}
+	function makeRowHTML(wrap){
+		const last = wrap.querySelector(".' . $this->rowClass . ':last-child");		// Grab last row
+		const clone = last.cloneNode(true);											// Deep clone
+		// Clear values
+		const select = clone.querySelector("select");									// Find select
+		if (select){ select.value = ""; }												// Reset select
+		const custom = clone.querySelector(".bfr-custom");							// Find custom
+		if (custom){ custom.value=""; custom.style.display="none"; }					// Hide custom
+		const mode = clone.querySelector(".bfr-mode");									// Find mode
+		if (mode){ mode.value = "value"; }												// Reset mode
 
-		var wrap = (addBtn || rmBtn).closest('[data-bfr-array]');
-		if (!wrap) return;
+		// Compute new index
+		const rows = wrap.querySelectorAll(".' . $this->rowClass . '");				// All rows
+		const idx  = rows.length;														// Next index
 
-		// Add row flow.
-		if (addBtn) {
-			var rows = wrap.querySelectorAll('[data-bfr-row]');
-			var idx  = rows.length;
-			var tpl  = rows[rows.length - 1];		// clone last row as a template
-			if (!tpl) return;
-			var clone = tpl.cloneNode(true);		// deep clone
-			// Clean values inside clone.
-			clone.querySelectorAll('select, input[type="text"]').forEach(function(el){
-				if (el.matches('select')) el.value = '';
-				if (el.matches('input[type="text"]')) { el.value = ''; el.style.display = 'none'; }
-			});
-			clone.querySelectorAll('[data-bfr-mode]').forEach(function(el){ el.value = 'select'; });
+		// Rewrite names on select/custom/mode
+		const base = wrap.dataset.name;													// Base select name
+		const baseC= wrap.dataset.nameCustom || "";										// Base custom name
+		const baseM= wrap.dataset.nameMode   || "";										// Base mode name
 
-			// Bump names/ids with new index.
-			clone.querySelectorAll('[name]').forEach(function(el){
-				el.name = el.name.replace(/\\[\\d+\\]/, '[' + idx + ']');
-			});
-			clone.querySelectorAll('[id]').forEach(function(el){
-				el.id = el.id.replace(/-\\d+$/, '-' + idx);
-			});
-			// Append clone.
-			wrap.querySelector('[data-bfr-add]').closest('p').insertAdjacentElement('beforebegin', clone);
-			e.preventDefault();
-			return;
+		if (select){ select.name = base + "["+idx+"]"; }								// New select name
+		if (custom && baseC){ custom.name = baseC + "["+idx+"]"; }						// New custom name
+		if (mode   && baseM){   mode.name   = baseM + "["+idx+"]"; }					// New mode name
+
+		return clone;																	// Return prepared clone
+	}
+
+	document.addEventListener("click", function(e){
+		const btn = e.target;															// Clicked element
+		if (!(btn instanceof HTMLButtonElement)) return;								// Only buttons
+		if (!btn.closest(".' . $this->wrapClass . '")) return;							// Only inside wraps
+		const wrap = btn.closest(".' . $this->wrapClass . '");							// Find wrapper
+
+		if (btn.classList.contains("bfr-array-add")){									// Handle add
+			const newRow = makeRowHTML(wrap);											// Prepare row
+			wrap.appendChild(newRow);													// Append
+			return;																		// Done
 		}
-
-		// Remove row flow.
-		if (rmBtn) {
-			var row = rmBtn.closest('[data-bfr-row]');
-			if (!row) return;
-
-			var rows = wrap.querySelectorAll('[data-bfr-row]');
-			if (rows.length === 1) {
-				// If it's the last row, clear inputs instead of removing node.
-				row.querySelectorAll('select').forEach(function(el){ el.value = ''; });
-				row.querySelectorAll('[data-bfr-custom="1"]').forEach(function(el){ el.value = ''; el.style.display = 'none'; });
-				row.querySelectorAll('[data-bfr-mode]').forEach(function(el){ el.value = 'select'; });
+		if (btn.classList.contains("bfr-array-remove")){								// Handle remove
+			const rows = wrap.querySelectorAll(".' . $this->rowClass . '");			// All rows
+			if (rows.length > 1){														// If more than 1 row
+				btn.closest(".' . $this->rowClass . '").remove();						// Remove row
 			} else {
-				// Remove the row.
-				row.remove();
-				// Reindex remaining rows (names/ids).
-				var newIdx = 0;
-				wrap.querySelectorAll('[data-bfr-row]').forEach(function(r){
-					r.querySelectorAll('[name]').forEach(function(el){
-						el.name = el.name.replace(/\\[\\d+\\]/, '[' + newIdx + ']');
-					});
-					r.querySelectorAll('[id]').forEach(function(el){
-						el.id = el.id.replace(/-\\d+$/, '-' + newIdx);
-					});
-					newIdx++;
-				});
+				// Allow removing the last row: leave an empty array (no fields submitted)
+				btn.closest(".' . $this->rowClass . '").remove();						// Remove only row
+				// Optionally, you could append a hidden marker if your save logic needs it.
+				// Keeping it empty is usually fine: PHP sees missing indexes as empty array.
 			}
-			e.preventDefault();
-			return;
-		}
-	});
-
-	// Toggle custom input visibility when sentinel selected.
-	document.addEventListener('change', function(e){
-		var sel = e.target.closest('[data-bfr-select="1"]');
-		if (!sel) return;
-		var scope = sel.closest('[data-bfr-scope]');
-		if (!scope) return;
-		var custom = scope.querySelector('[data-bfr-custom="1"]');
-		var mode   = scope.querySelector('[data-bfr-mode="1"]');
-		if (!custom || !mode) return;
-
-		if (sel.value === '__custom__') {
-			custom.style.display = '';
-			mode.value = 'custom';
-		} else {
-			custom.style.display = 'none';
-			mode.value = 'select';
+			return;																		// Done
 		}
 	});
 })();
-</script>
-HTML;
-		// Return script block.
-		return $js;
-	}
-
-	/**
-	 * Basic ID derivation helper (same logic as renderer for consistency).
-	 * @param string $name_base
-	 * @return string
-	 */
-	private function id_from_name(string $name_base): string {
-		// Convert bracketed names into safe IDs.
-		$id = preg_replace('/\[+/', '-', $name_base);
-		$id = preg_replace('/\]+/', '', (string) $id);
-		$id = preg_replace('/[^a-zA-Z0-9\-_:.]/', '-', (string) $id);
-		return trim((string) $id, '-');
+</script>';
 	}
 }

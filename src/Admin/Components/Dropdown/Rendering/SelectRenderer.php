@@ -1,95 +1,147 @@
 <?php
-declare(strict_types=1);
+declare(strict_types=1);	// Enforce strict typing
 
-namespace BFR\Admin\Components\Dropdown\Rendering;
+namespace BFR\Admin\Components\Dropdown\Rendering;	// Rendering namespace
 
 /**
  * SelectRenderer
- * - Single place to output a <select> with "Custom…" text input and hidden "mode".
- * - Optional preview block can be toggled via args to keep parity with your existing UX.
+ *
+ * Renders a <select> with options, PLUS an optional "Custom…" input that
+ * shows when the special value "__custom__" is selected. Also includes a
+ * hidden "mode" input so saving code is reliable:
+ *  - "value"  => user picked a predefined option
+ *  - "custom" => user entered a custom text
  */
-final class SelectRenderer {
+final class SelectRenderer
+{
+	/** @var string */
+	private string $customSentinel = '__custom__';		// Sentinel value for custom
+
+	/** @var string */
+	private string $customLabel    = 'Custom…';			// Label for custom option
+
 	/**
-	 * Render a select + optional custom field + hidden mode + optional preview.
-	 * @param string $name			// Name attribute for <select>
-	 * @param array<string,string> $options	// Options value=>label
-	 * @param string|null $value		// Current saved value
-	 * @param array<string,mixed> $args		// id, class, custom_name, mode_name, placeholder, show_preview, preview_post_selector, preview_label
-	 * @return string				// HTML string
+	 * Render the composite control.
+	 *
+	 * @param string					$nameSelect		Name for <select>
+	 * @param string|null				$currentValue	Current selected value (may be null)
+	 * @param array<string,string>		$options		Map value => label
+	 * @param array<string,string>		$attrsSelect	Extra attributes for <select> (e.g., ['id'=>'foo','onchange'=>'...'])
+	 * @param string|null				$nameCustom		Name for text input (set null to disable custom UI)
+	 * @param string|null				$currentCustom	Current custom text (if any)
+	 * @param string|null				$nameMode		Name for hidden mode input (set null to disable)
+	 * @return string									HTML markup
 	 */
-	public function render(string $name, array $options, ?string $value, array $args = []): string {
-		// Resolve stable ID.
-		$id = isset($args['id']) ? (string) $args['id'] : $this->id_from_name($name);
-		// Determine if value is custom.
-		$is_custom  = ($value !== null && !array_key_exists($value, $options));
-		// Pick the select's shown value (sentinel if custom).
-		$select_val = $is_custom ? '__custom__' : (string) ($value ?? '');
-		// Resolve helpers.
-		$custom_name  = $args['custom_name']  ?? ($name . '_custom');
-		$mode_name    = $args['mode_name']    ?? ($name . '_mode');
-		$placeholder  = $args['placeholder']  ?? 'Enter custom value…';
-		$select_class = $args['class']        ?? 'regular-text';
-		$show_preview = (bool)($args['show_preview'] ?? false);
+	public function render(
+		string $nameSelect,
+		?string $currentValue,
+		array $options,
+		array $attrsSelect = [],
+		?string $nameCustom = null,
+		?string $currentCustom = null,
+		?string $nameMode = null
+	): string {
+		// Determine initial mode: 'custom' if value not in options and custom UI is enabled
+		$useCustom = $nameCustom !== null && $currentValue !== null && !array_key_exists($currentValue, $options);
 
-		// Start wrapper span with a data scope for JS.
-		$html  = '<span class="bfr-select" data-bfr-scope="' . esc_attr($id) . '">';
+		// Build the select’s attributes
+		$attrsSelect = $this->normalize_attrs($attrsSelect);			// Ensure strings
+		$attrsSelect['name'] = $nameSelect;							// Set name
+		$attrsHtml = $this->attrs_to_html($attrsSelect);			// Convert to HTML
 
-		// Open the select.
-		$html .= sprintf('<select id="%s" name="%s" class="%s" data-bfr-select="1">', esc_attr($id), esc_attr($name), esc_attr($select_class));
-		// Optional empty option.
-		$html .= '<option value="">' . esc_html__('— Select —', 'bfr-core') . '</option>';
-		// Emit options.
-		foreach ($options as $opt_value => $label) {
-			$html .= sprintf(
-				'<option value="%s"%s>%s</option>',
-				esc_attr((string) $opt_value),
-				selected($select_val, (string) $opt_value, false),
-				esc_html((string) $label)
-			);
-		}
-		// Close select.
-		$html .= '</select> ';
+		// Begin wrapper span for easy JS targeting
+		$html = '<span class="bfr-select-with-custom">';			// Wrapper element
 
-		// Custom input visibility toggles with sentinel.
-		$custom_style = $is_custom ? '' : 'style="display:none"';
-		$custom_val   = $is_custom ? (string) $value : '';
-		$html .= sprintf(
-			'<input type="text" name="%s" value="%s" class="regular-text" placeholder="%s" data-bfr-custom="1" %s/>',
-			esc_attr($custom_name),
-			esc_attr($custom_val),
-			esc_attr($placeholder),
-			$custom_style
-		);
+		// Build the <select> element
+		$html .= '<select ' . $attrsHtml . '>';						// Open select
 
-		// Hidden mode input so saves are deterministic.
-		$mode_value = $is_custom ? 'custom' : 'select';
-		$html .= sprintf('<input type="hidden" name="%s" value="%s" data-bfr-mode="1"/>', esc_attr($mode_name), esc_attr($mode_value));
-
-		// Optional small preview slot (kept generic; your page JS can hydrate it).
-		if ($show_preview) {
-			$html .= '<div class="bfr-preview" style="margin-top:6px;"><code id="' . esc_attr($id) . '-preview-value">—</code></div>';
+		// Emit provided options
+		foreach ($options as $val => $label) {						// Loop options
+			$selected = (!$useCustom && $currentValue === $val) ? ' selected' : '';	// Selected?
+			$html    .= '<option value="' . esc_attr((string)$val) . '"' . $selected . '>' . esc_html((string)$label) . '</option>';	// Option
 		}
 
-		// Close wrapper span.
-		$html .= '</span>';
+		// Append the "Custom…" sentinel if custom UI is enabled
+		if ($nameCustom !== null) {									// If custom enabled
+			$sel = $useCustom ? ' selected' : '';					// Selected for sentinel?
+			$html .= '<option value="' . esc_attr($this->customSentinel) . '"' . $sel . '>' . esc_html($this->customLabel) . '</option>';	// Custom option
+		}
 
-		// Return final HTML.
-		return $html;
+		$html .= '</select>';										// Close select
+
+		// If custom UI enabled, render the text input and hidden mode
+		if ($nameCustom !== null) {									// If custom allowed
+			$style = $useCustom ? '' : ' style="display:none"';		// Toggle visibility
+			$html .= '<input type="text" class="regular-text bfr-custom" name="' . esc_attr($nameCustom) . '" value="' . esc_attr((string)($currentCustom ?? '')) . '"' . $style . ' />';	// Custom text
+			if ($nameMode !== null) {								// If mode tracking requested
+				$html .= '<input type="hidden" class="bfr-mode" name="' . esc_attr($nameMode) . '" value="' . esc_attr($useCustom ? 'custom' : 'value') . '" />';	// Hidden mode
+			}
+		}
+
+		$html .= '</span>';											// Close wrapper
+
+		// Inline minimal JS to toggle custom field on change
+		$html .= $this->script_once();								// Inject once
+
+		return $html;												// Return markup
 	}
 
 	/**
-	 * Create a stable ID from a name like "registry[target_meta_key]".
-	 * @param string $name
-	 * @return string
+	 * Convert attributes array to HTML string.
+	 *
+	 * @param array<string,string> $attrs	Attributes map
+	 * @return string						HTML attributes
 	 */
-	private function id_from_name(string $name): string {
-		// Replace brackets with hyphens for safe IDs.
-		$id = preg_replace('/\[+/', '-', $name);
-		// Remove closing brackets.
-		$id = preg_replace('/\]+/', '', (string) $id);
-		// Collapse unsafe chars to hyphens.
-		$id = preg_replace('/[^a-zA-Z0-9\-_:.]/', '-', (string) $id);
-		// Trim hyphens from ends.
-		return trim((string) $id, '-');
+	private function attrs_to_html(array $attrs): string
+	{
+		$parts = [];												// Accumulator
+		foreach ($attrs as $k => $v) {								// Loop pairs
+			$parts[] = esc_attr((string)$k) . '="' . esc_attr((string)$v) . '"';	// k="v"
+		}
+		return implode(' ', $parts);								// Join by spaces
+	}
+
+	/**
+	 * Ensure attribute values are strings.
+	 *
+	 * @param array<string,mixed> $attrs	Input attributes
+	 * @return array<string,string>			Normalized attributes
+	 */
+	private function normalize_attrs(array $attrs): array
+	{
+		$out = [];													// Normalized map
+		foreach ($attrs as $k => $v) {								// Loop pairs
+			$out[(string)$k] = (string)$v;							// Cast to strings
+		}
+		return $out;												// Return normalized
+	}
+
+	/**
+	 * Emit the small toggle script, once per page.
+	 *
+	 * @return string	Inline <script> (empty if already printed)
+	 */
+	private function script_once(): string
+	{
+		static $done = false;										// Static guard
+		if ($done) {												// If already emitted
+			return '';												// No-op
+		}
+		$done = true;												// Mark emitted
+
+		// Vanilla JS: toggles custom input + mode based on sentinel selection
+		return '<script>
+document.addEventListener("change", function(e){
+	const select = e.target;
+	if (!(select instanceof HTMLSelectElement)) return;
+	if (!select.closest(".bfr-select-with-custom")) return;
+	const wrap   = select.closest(".bfr-select-with-custom");
+	const custom = wrap.querySelector(".bfr-custom");
+	const mode   = wrap.querySelector(".bfr-mode");
+	const isCustom = (select.value === "__custom__");
+	if (custom) { custom.style.display = isCustom ? "" : "none"; }
+	if (mode)   { mode.value = isCustom ? "custom" : "value"; }
+});
+</script>';														// Return script
 	}
 }
