@@ -115,17 +115,17 @@ final class CalculatedMetaEditor
         echo '<p class="description">Used to discover <strong>Target Meta Keys</strong> and saved to each calculator.</p>';
         echo '</td></tr>';
 
-        // Target CPT (post type slug)
-        echo '<tr><th scope="row">Target CPT (post type slug)</th><td>';
-        echo $dropdowns->render_select_with_custom(
-            'target_cpt_id_global',
-            'target_cpt_id_global_custom',
-            'target_cpt_id_global_mode',
-            $cpt_options,
-            $default_target_cpt,
-            ''
+        // PREVIEW PAGE (NEW) — built from posts of the currently selected Target CPT
+        echo '<tr><th scope="row">Preview Page</th><td>';
+        echo $post_dropdown->render_select_with_custom(
+            'preview_post_id_global',          // <select> name (post ID values)
+            'preview_post_id_global_custom',   // "Custom…" text input name
+            'preview_post_id_global_mode',     // hidden mode field name: 'value' | 'custom'
+            $default_target_cpt,               // Populate options from selected Target CPT
+            '',                                // no default selection
+            ''                                 // no custom prefill
         );
-        echo '<p class="description">Used to discover <strong>Target Meta Keys</strong> and saved to each calculator.</p>';
+        echo '<p class="description">Pick a sample <strong>' . esc_html($default_target_cpt) . '</strong> post to preview templates/calculations. You can also enter a custom value.</p>';
         echo '</td></tr>';
 
         // Relation meta key (text)
