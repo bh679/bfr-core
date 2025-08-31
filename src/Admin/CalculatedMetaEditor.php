@@ -6,6 +6,7 @@ namespace BFR\Admin;
 use BFR\Admin\Components\DropdownProvider;
 use BFR\Admin\Components\CalculatedMetaFieldInputs;
 use BFR\Admin\Components\MetaKeysTable;
+use BFR\Admin\Components\PostDropdown;
 use BFR\Infrastructure\WordPress\OptionRepository;
 
 /**
@@ -73,6 +74,7 @@ final class CalculatedMetaEditor
         // Build providers/components
         $dropdowns = new DropdownProvider();
         $inputs    = new CalculatedMetaFieldInputs($dropdowns, $default_target_cpt, $default_input_cpt);
+        $post_dropdown = new PostDropdown($dropdowns); // NEW
         $table     = new MetaKeysTable($this->registry, $inputs);
 
         echo '<div class="wrap"><h1>Calculator Editor</h1>';
@@ -101,6 +103,19 @@ final class CalculatedMetaEditor
         echo '</td></tr>';
 
         // Target CPT (select/custom/mode)
+        echo '<tr><th scope="row">Target CPT (post type slug)</th><td>';
+        echo $dropdowns->render_select_with_custom(
+            'target_cpt_id_global',
+            'target_cpt_id_global_custom',
+            'target_cpt_id_global_mode',
+            $cpt_options,
+            $default_target_cpt,
+            ''
+        );
+        echo '<p class="description">Used to discover <strong>Target Meta Keys</strong> and saved to each calculator.</p>';
+        echo '</td></tr>';
+
+        // Target CPT (post type slug)
         echo '<tr><th scope="row">Target CPT (post type slug)</th><td>';
         echo $dropdowns->render_select_with_custom(
             'target_cpt_id_global',
