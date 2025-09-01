@@ -168,9 +168,9 @@ final class CalculatedMetaEditor
 
 
         // Resolve preview post id from the current form state (falls back to 0 if nothing chosen)
-        /*$pp_mode = sanitize_text_field($_POST['preview_post_id_global_mode'] ?? 'value');   // 'value' | 'custom'
+        $pp_mode = sanitize_text_field($_POST['preview_post_id_global_mode'] ?? 'value');   // 'value' | 'custom'
         $pp_sel  = (string)($_POST['preview_post_id_global'] ?? '');                        // Selected post id
-        $pp_cus  = (string)($_POST['preview_post_id_global_custom'] ?? '');             // Custom post id*/
+        $pp_cus  = (string)($_POST['preview_post_id_global_custom'] ?? '');             // Custom post id
         $preview_post_id = 0;//($pp_mode === 'custom') ? (int)$pp_cus : (int)$pp_sel;
 
         // ===== Calculators table =====

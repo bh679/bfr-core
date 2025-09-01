@@ -12,10 +12,8 @@ use BFR\Admin\Components\Dropdown\OptionProviderInterface;	// Import interface
  * 1) JetEngine meta boxes (if present)
  * 2) Fallback sample from wp_postmeta for posts of that CPT
  *
- * It can optionally decorate option labels with the *current* meta value
- * for a specific post when $context['post_id'] is provided.
- *
- * NOTE: This is best-effort; WordPress doesn’t centralize meta keys.
+ * Optionally decorates labels with the current meta value for a specific post
+ * when $context['post_id'] is provided.
  */
 final class MetaKeyOptionsProvider implements OptionProviderInterface
 {
@@ -27,13 +25,14 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 	 */
 	public function __construct(int $sampleLimit = 200)	// Constructor with sane default
 	{
-<|diff_marker|> PATCH A
--		$this->sampleLimit = max(20, $sampleLimit);		// Clamp to avoid very small limits
-+		$this->sampleLimit = max(20, $sampleLimit);		// Clamp to avoid very small limits
+		$this->sampleLimit = max(20, $sampleLimit);		// Clamp to avoid very small limits
 	}
 
 	/**
 	 * @inheritDoc
+	 * @param array<string,mixed> $context
+	 *   Required: ['cpt' => string]
+	 *   Optional: ['post_id' => int] to show current values in labels
 	 */
 	public function get_options(array $context = []): array	// Build meta key options
 	{
@@ -42,8 +41,8 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 			return [];										// No options possible
 		}
 
-+		$postId = isset($context['post_id']) ? (int)$context['post_id'] : 0;	// Optional: a post to read values from
-+		$showValues = $postId > 0;											// Whether to decorate labels with values
+		$postId     = isset($context['post_id']) ? (int)$context['post_id'] : 0;	// Optional preview post
+		$showValues = $postId > 0;												// Whether to decorate labels
 
 		$keys = [];											// Aggregate set of keys
 
@@ -62,7 +61,6 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 		// 2) Fallback sample from wp_postmeta
 		if (empty($keys)) {									// If no JE keys found
 			global $wpdb;									// Access WP DB
-			// Query a sample of recent posts for this CPT			// Efficient-ish fallback
 			$post_ids = $wpdb->get_col(
 				$wpdb->prepare(
 					"SELECT ID
@@ -92,16 +90,15 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 			}
 		}
 
-		// Convert set -> "value => label" (decorate label if a post_id is provided)
+		// Convert set -> "value => label" (decorate if a post_id is provided)
 		$out = [];											// Final output
 		foreach (array_keys($keys) as $k) {					// Loop unique keys
--			$out[$k] = $k;									// Label equals key
-+			if ($showValues) {								// If we should show values
-+				$val = get_post_meta($postId, $k, true);	// Read current meta value
-+				$out[$k] = $this->format_label_with_value($k, $val);	// Append preview
-+			} else {
-+				$out[$k] = $k;								// Plain label
-+			}
+			if ($showValues) {								// If we should show values
+				$val = get_post_meta($postId, $k, true);	// Read current meta value
+				$out[$k] = $this->format_label_with_value($k, $val);	// Append preview
+			} else {
+				$out[$k] = $k;								// Plain label
+			}
 		}
 
 		ksort($out, SORT_NATURAL | SORT_FLAG_CASE);			// Sort for stable UX
@@ -118,79 +115,85 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 	{
 		$keys = [];										// Accumulator
 
-		// JetEngine stores meta boxes per post type
-		$mb = jet_engine()->meta_boxes ?? null;			// Get JE meta boxes manager
-		if ($mb && method_exists($mb, 'get_fields_for_post_type')) {	// Newer JE API
-			$fields = $mb->get_fields_for_post_type($cpt);	// Fetch fields by CPT
-			if (is_array($fields)) {						// Ensure array
-				foreach ($fields as $field) {				// Loop fields
-					$key = (string)($field['name'] ?? '');	// Field "name" is meta key
-					if ($key !== '') {						// Skip empties
-						$keys[] = $key;						// Add meta key
+		$je = function_exists('jet_engine') ? jet_engine() : null;	// JE instance (or null)
+		if (!$je || !is_object($je)) {
+			return $keys;											// No JetEngine available
+		}
+
+		// Newer JetEngine API: meta_boxes->get_fields_for_post_type()
+		if (isset($je->meta_boxes) && is_object($je->meta_boxes)) {
+			$mb = $je->meta_boxes;
+			if (method_exists($mb, 'get_fields_for_post_type')) {
+				$fields = $mb->get_fields_for_post_type($cpt);
+				if (is_array($fields)) {
+					foreach ($fields as $field) {
+						$key = (string)($field['name'] ?? '');
+						if ($key !== '') { $keys[] = $key; }
 					}
 				}
+				return $keys;										// Prefer this path
 			}
-		} elseif ($mb && method_exists($mb, 'get_all_fields')) {	// Legacy JE API
-			$fields = $mb->get_all_fields();				// Get all fields
-			if (is_array($fields)) {						// Ensure array
-				foreach ($fields as $field) {				// Loop fields
-					if (($field['object_type'] ?? '') === $cpt) {	// Match CPT
-						$key = (string)($field['name'] ?? '');	// Field name
-						if ($key !== '') {					// Skip empties
-							$keys[] = $key;					// Add meta key
+			// Legacy catch-all
+			if (method_exists($mb, 'get_all_fields')) {
+				$fields = $mb->get_all_fields();
+				if (is_array($fields)) {
+					foreach ($fields as $field) {
+						if (($field['object_type'] ?? '') === $cpt) {
+							$key = (string)($field['name'] ?? '');
+							if ($key !== '') { $keys[] = $key; }
 						}
 					}
 				}
+				return $keys;
 			}
 		}
 
 		return $keys;										// Return collected keys
 	}
 
-+	/**
-+	 * Format the option label as: "{meta_key} — {value preview}".
-+	 * Safely stringifies arrays/objects and truncates long strings.
-+	 *
-+	 * @param string $key   Meta key
-+	 * @param mixed  $value Raw meta value from get_post_meta()
-+	 * @return string       Human-friendly label with value
-+	 */
-+	private function format_label_with_value(string $key, mixed $value): string
-+	{
-+		$preview = $this->stringify_preview($value);			// Convert to short string
-+		return ($preview === '')
-+			? $key . ' — (empty)'
-+			: $key . ' — ' . $preview;
-+	}
-+
-+	/**
-+	 * Convert a meta value into a short, safe preview.
-+	 * - Scalars are cast to string.
-+	 * - Arrays/objects are JSON-encoded compactly.
-+	 * - Long strings are truncated to ~60 chars with an ellipsis.
-+	 *
-+	 * @param mixed $value Raw meta
-+	 * @return string      Short preview
-+	 */
-+	private function stringify_preview(mixed $value): string
-+	{
-+		if (is_null($value) || $value === '') {
-+			return '';
-+		}
-+		if (is_scalar($value)) {
-+			$str = (string) $value;
-+		} else {
-+			$json = wp_json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-+			$str  = is_string($json) ? $json : '';
-+		}
-+		$str = trim($str);
-+		if ($str === '') {
-+			return '';
-+		}
-+		// Truncate for readability
-+		if (mb_strlen($str) > 60) {
-+			$str = mb_substr($str, 0, 57) . '…';
-+		}
-+		return $str;
-+	}
+	/**
+	 * Format the option label as: "{meta_key} — {value preview}".
+	 * Safely stringifies arrays/objects and truncates long strings.
+	 *
+	 * @param string $key   Meta key
+	 * @param mixed  $value Raw meta value from get_post_meta()
+	 * @return string       Human-friendly label with value
+	 */
+	private function format_label_with_value(string $key, mixed $value): string
+	{
+		$preview = $this->stringify_preview($value);			// Convert to short string
+		return ($preview === '')
+			? $key . ' — (empty)'
+			: $key . ' — ' . $preview;
+	}
+
+	/**
+	 * Convert a meta value into a short, safe preview.
+	 * - Scalars are cast to string.
+	 * - Arrays/objects are JSON-encoded compactly.
+	 * - Long strings are truncated to ~60 chars with an ellipsis.
+	 *
+	 * @param mixed $value Raw meta
+	 * @return string      Short preview
+	 */
+	private function stringify_preview(mixed $value): string
+	{
+		if (is_null($value) || $value === '') {
+			return '';
+		}
+		if (is_scalar($value)) {
+			$str = (string) $value;
+		} else {
+			$json = wp_json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+			$str  = is_string($json) ? $json : '';
+		}
+		$str = trim($str);
+		if ($str === '') {
+			return '';
+		}
+		if (mb_strlen($str) > 60) {
+			$str = mb_substr($str, 0, 57) . '…';
+		}
+		return $str;
+	}
 }
