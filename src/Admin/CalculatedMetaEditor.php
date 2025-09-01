@@ -27,6 +27,7 @@ final class CalculatedMetaEditor
 {
     /** @var array<string, array<string,mixed>> */
     private array $registry;            // Calculator registry (merged config)
+    private int $preview_post_id;
 
     private OptionRepository $options;  // Options repository
 
@@ -171,13 +172,13 @@ final class CalculatedMetaEditor
         $pp_mode = sanitize_text_field($_POST['preview_post_id_global_mode'] ?? 'value');   // 'value' | 'custom'
         $pp_sel  = (string)($_POST['preview_post_id_global'] ?? '');                        // Selected post id
         $pp_cus  = (string)($_POST['preview_post_id_global_custom'] ?? '');             // Custom post id
-        $preview_post_id = 0;//($pp_mode === 'custom') ? (int)$pp_cus : (int)$pp_sel;
+        $this->preview_post_id = 0;//($pp_mode === 'custom') ? (int)$pp_cus : (int)$pp_sel;
 
         // ===== Calculators table =====
         $inputs = new CalculatedMetaFieldInputs(            // Build field renderer bound to these CPTs
             $default_target_cpt,
             $default_input_cpt,
-            $preview_post_id
+            $this->preview_post_id
         );
         $table = new MetaKeysTable($this->registry, $inputs);   // Compose table with renderer
         echo $table->render();                                  // Render table
