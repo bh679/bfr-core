@@ -25,7 +25,7 @@ final class CalculatedMetaFieldInputs
         // Active CPTs (drive which meta keys are discovered)
         private string $target_cpt;                             // Active target CPT
         private string $input_cpt;                              // Active input CPT
-        private string $preview_post_id;                              // Active input CPT
+        private int $preview_post_id;                              // Active input CPT
 
         // Dropdown plumbing (providers + controls)
         private SelectRenderer $renderer;               // Shared HTML renderer
@@ -39,7 +39,7 @@ final class CalculatedMetaFieldInputs
          * @param string $target_cpt    Active target CPT (used for discovering target meta keys)
          * @param string $input_cpt             Active input CPT (used for discovering input meta keys)
          */
-        public function __construct(string $target_cpt, string $input_cpt, string $preview_post_id)
+        public function __construct(string $target_cpt, string $input_cpt, int $preview_post_id)
         {
                 $this->target_cpt = $target_cpt;                                                                // Save target CPT
                 $this->input_cpt  = $input_cpt;                                                                 // Save input CPT

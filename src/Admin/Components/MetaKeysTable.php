@@ -23,7 +23,7 @@ final class MetaKeysTable
      * @param array<string,array<string,mixed>> $registry Active calculators registry (merged config)
      * @param CalculatedMetaFieldInputs         $inputs   Field renderer/saver per calculator
      */
-    public function __construct(array $registry, CalculatedMetaFieldInputs $inputs, string $preview_post_id;)
+    public function __construct(array $registry, CalculatedMetaFieldInputs $inputs, int $preview_post_id;)
     {
         $this->registry = $registry;
         $this->inputs   = $inputs;
