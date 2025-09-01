@@ -12,6 +12,9 @@ use BFR\Admin\Components\Dropdown\OptionProviderInterface;	// Import interface
  * 1) JetEngine meta boxes (if present)
  * 2) Fallback sample from wp_postmeta for posts of that CPT
  *
+ * It can optionally decorate option labels with the *current* meta value
+ * for a specific post when $context['post_id'] is provided.
+ *
  * NOTE: This is best-effort; WordPress doesn’t centralize meta keys.
  */
 final class MetaKeyOptionsProvider implements OptionProviderInterface
@@ -24,7 +27,9 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 	 */
 	public function __construct(int $sampleLimit = 200)	// Constructor with sane default
 	{
-		$this->sampleLimit = max(20, $sampleLimit);		// Clamp to avoid very small limits
+<|diff_marker|> PATCH A
+-		$this->sampleLimit = max(20, $sampleLimit);		// Clamp to avoid very small limits
++		$this->sampleLimit = max(20, $sampleLimit);		// Clamp to avoid very small limits
 	}
 
 	/**
@@ -36,6 +41,9 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 		if ($cpt === '') {									// If missing CPT
 			return [];										// No options possible
 		}
+
++		$postId = isset($context['post_id']) ? (int)$context['post_id'] : 0;	// Optional: a post to read values from
++		$showValues = $postId > 0;											// Whether to decorate labels with values
 
 		$keys = [];											// Aggregate set of keys
 
@@ -84,10 +92,16 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 			}
 		}
 
-		// Convert set -> "value => label"
+		// Convert set -> "value => label" (decorate label if a post_id is provided)
 		$out = [];											// Final output
 		foreach (array_keys($keys) as $k) {					// Loop unique keys
-			$out[$k] = $k;									// Label equals key
+-			$out[$k] = $k;									// Label equals key
++			if ($showValues) {								// If we should show values
++				$val = get_post_meta($postId, $k, true);	// Read current meta value
++				$out[$k] = $this->format_label_with_value($k, $val);	// Append preview
++			} else {
++				$out[$k] = $k;								// Plain label
++			}
 		}
 
 		ksort($out, SORT_NATURAL | SORT_FLAG_CASE);			// Sort for stable UX
@@ -132,4 +146,51 @@ final class MetaKeyOptionsProvider implements OptionProviderInterface
 
 		return $keys;										// Return collected keys
 	}
+
++	/**
++	 * Format the option label as: "{meta_key} — {value preview}".
++	 * Safely stringifies arrays/objects and truncates long strings.
++	 *
++	 * @param string $key   Meta key
++	 * @param mixed  $value Raw meta value from get_post_meta()
++	 * @return string       Human-friendly label with value
++	 */
++	private function format_label_with_value(string $key, mixed $value): string
++	{
++		$preview = $this->stringify_preview($value);			// Convert to short string
++		return ($preview === '')
++			? $key . ' — (empty)'
++			: $key . ' — ' . $preview;
++	}
++
++	/**
++	 * Convert a meta value into a short, safe preview.
++	 * - Scalars are cast to string.
++	 * - Arrays/objects are JSON-encoded compactly.
++	 * - Long strings are truncated to ~60 chars with an ellipsis.
++	 *
++	 * @param mixed $value Raw meta
++	 * @return string      Short preview
++	 */
++	private function stringify_preview(mixed $value): string
++	{
++		if (is_null($value) || $value === '') {
++			return '';
++		}
++		if (is_scalar($value)) {
++			$str = (string) $value;
++		} else {
++			$json = wp_json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
++			$str  = is_string($json) ? $json : '';
++		}
++		$str = trim($str);
++		if ($str === '') {
++			return '';
++		}
++		// Truncate for readability
++		if (mb_strlen($str) > 60) {
++			$str = mb_substr($str, 0, 57) . '…';
++		}
++		return $str;
++	}
 }

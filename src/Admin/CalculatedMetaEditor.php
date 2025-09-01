@@ -166,10 +166,18 @@ final class CalculatedMetaEditor
 
         echo '</tbody></table>';
 
+
+        // Resolve preview post id from the current form state (falls back to 0 if nothing chosen)
+        $pp_mode = sanitize_text_field($_POST['preview_post_id_global_mode'] ?? 'value');   // 'value' | 'custom'
+        $pp_sel  = (string)($_POST['preview_post_id_global'] ?? '');                        // Selected post id
+        $pp_cus  = (string)($_POST['preview_post_id_global_custom'] ?? '');             // Custom post id
+        $preview_post_id = ($pp_mode === 'custom') ? (int)$pp_cus : (int)$pp_sel;
+
         // ===== Calculators table =====
         $inputs = new CalculatedMetaFieldInputs(            // Build field renderer bound to these CPTs
             $default_target_cpt,
-            $default_input_cpt
+            $default_input_cpt,
+            $preview_post_id
         );
         $table = new MetaKeysTable($this->registry, $inputs);   // Compose table with renderer
         echo $table->render();                                  // Render table
